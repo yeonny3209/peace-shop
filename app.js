@@ -64,7 +64,64 @@
   }
 
   let state = load();
-  const save = () => safeSet(localStorage, STORE_KEY, JSON.stringify(state));
+
+  // ---------- 서버 공유 저장소 (api/state가 있으면 서버 모드, 없으면 이 기기 저장 모드) ----------
+  const TOKEN_KEY = 'peace-shop-token';
+  const server = { on: false, rev: 0, inflight: 0 };
+  const token = () => safeGet(sessionStorage, TOKEN_KEY) || '';
+  let chain = Promise.resolve();
+  let ready = false;
+
+  function adopt(j) {
+    const base = defaultState();
+    server.rev = j.rev;
+    state = { ...base, ...j.state, settings: { ...base.settings, ...(j.state.settings || {}) } };
+  }
+
+  function save() {
+    if (!server.on) return safeSet(localStorage, STORE_KEY, JSON.stringify(state));
+    server.inflight++;
+    chain = chain.then(async () => {
+      try {
+        const res = await fetch('api/state', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json', 'x-token': token() },
+          body: JSON.stringify({ rev: server.rev, state }),
+        });
+        const j = await res.json().catch(() => null);
+        if (res.ok && j) adopt(j);
+        else if (res.status === 409 && j) { adopt(j); toast('다른 기기에서 먼저 바뀌어 새로 불러왔어요. 다시 해 주세요'); }
+        else if (res.status === 401) { safeDel(sessionStorage, TOKEN_KEY); safeDel(sessionStorage, AUTH_KEY); toast('다시 로그인해 주세요'); }
+        else toast('서버에 저장하지 못했어요');
+      } catch {
+        toast('서버에 연결할 수 없어요');
+      } finally {
+        server.inflight--;
+        if (!server.inflight) render();
+      }
+    });
+  }
+
+  async function poll() {
+    if (document.hidden || server.inflight || modal.open) return;
+    const a = document.activeElement;
+    if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
+    try {
+      const res = await fetch('api/state', { cache: 'no-store' });
+      if (!res.ok) return;
+      const j = await res.json();
+      if (j.rev !== server.rev && !server.inflight) { adopt(j); render(); }
+    } catch { /* 일시적인 연결 끊김 */ }
+  }
+
+  async function api(path, payload) {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-token': token() },
+      body: JSON.stringify(payload),
+    });
+    return { ok: res.ok, data: await res.json().catch(() => ({})) };
+  }
 
   // ---------- Helpers ----------
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -105,6 +162,11 @@
   }
 
   async function checkPassword(pw) {
+    if (server.on) {
+      const r = await api('api/login', { pw });
+      if (r.ok) safeSet(sessionStorage, TOKEN_KEY, r.data.token);
+      return r.ok;
+    }
     const expected = state.settings.passwordHash || (await sha256(DEFAULT_PASSWORD));
     return (await sha256(pw)) === expected;
   }
@@ -141,6 +203,7 @@
   const isAuthed = () => safeGet(sessionStorage, AUTH_KEY) === '1';
 
   function render() {
+    if (!ready) return;
     const r = route();
     document.querySelectorAll('.mainnav a').forEach((a) => a.classList.toggle('active', a.dataset.route === r));
     app.innerHTML = r === 'admin' ? (isAuthed() ? renderAdmin() : renderLogin()) : renderShop();
@@ -240,7 +303,7 @@
     return `<div class="card login">
       <span class="coin">P</span>
       <h2>엄마 전용 화면</h2>
-      <p class="muted">비밀번호를 입력해 주세요.${state.settings.passwordHash ? '' : ` (처음 비밀번호: ${DEFAULT_PASSWORD} — 설정에서 꼭 바꿔 주세요)`}</p>
+      <p class="muted">비밀번호를 입력해 주세요.${state.settings.passwordHash || state.settings.passwordSet ? '' : ` (처음 비밀번호: ${DEFAULT_PASSWORD} — 설정에서 꼭 바꿔 주세요)`}</p>
       <form id="login-form" class="stack" style="gap:10px">
         <input type="password" name="pw" inputmode="numeric" autocomplete="current-password" placeholder="비밀번호" required>
         <button class="btn primary block">들어가기</button>
@@ -481,7 +544,7 @@
     'shop-cat': (id) => { ui.shopCat = id; },
     'admin-tab': (id) => { ui.adminTab = id; },
     'history-filter': (id) => { ui.historyFilter = id; },
-    logout: () => { safeDel(sessionStorage, AUTH_KEY); toast('로그아웃했어요'); },
+    logout: () => { safeDel(sessionStorage, AUTH_KEY); safeDel(sessionStorage, TOKEN_KEY); toast('로그아웃했어요'); },
     leftover: (id) => { state.settings.leftover = id; save(); toast(id === 'carry' ? '남는 장수를 다음에 이월해요' : '남는 장수를 버려요'); },
 
     buy: (id) => {
@@ -686,8 +749,14 @@
       }
       case 'password-form': {
         if (!(await checkPassword(String(fd.get('current'))))) { toast('현재 비밀번호가 달라요'); return; }
-        state.settings.passwordHash = await sha256(String(fd.get('next')));
-        save(); form.reset(); toast('비밀번호를 바꿨어요');
+        if (server.on) {
+          const r = await api('api/password', { current: String(fd.get('current')), next: String(fd.get('next')) });
+          if (!r.ok) { toast('비밀번호를 바꾸지 못했어요'); return; }
+        } else {
+          state.settings.passwordHash = await sha256(String(fd.get('next')));
+          save();
+        }
+        form.reset(); toast('비밀번호를 바꿨어요');
         return;
       }
     }
@@ -726,7 +795,28 @@
   });
 
   // 다른 탭에서 바뀐 데이터 반영
-  window.addEventListener('storage', (e) => { if (e.key === STORE_KEY) { state = load(); render(); } });
+  window.addEventListener('storage', (e) => { if (!server.on && e.key === STORE_KEY) { state = load(); render(); } });
   window.addEventListener('hashchange', render);
-  render();
+
+  async function init() {
+    app.innerHTML = '<div class="card empty">불러오는 중…</div>';
+    try {
+      const res = await fetch('api/state', { cache: 'no-store' });
+      const j = res.ok ? await res.json() : null;
+      if (j && 'rev' in j) {
+        server.on = true;
+        if (!j.state) {
+          const r = await fetch('api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: defaultState() }) });
+          Object.assign(j, await r.json());
+        }
+        adopt(j);
+        const note = $('#footer-note');
+        if (note) note.textContent = '데이터는 서버에 저장돼요. 같은 주소로 접속한 모든 기기에서 같은 잔액을 볼 수 있어요.';
+        setInterval(poll, 4000);
+      }
+    } catch { /* 서버 없음: 이 기기 저장 모드 */ }
+    ready = true;
+    render();
+  }
+  init();
 })();
