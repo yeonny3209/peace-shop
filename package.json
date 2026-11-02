@@ -1,0 +1,8 @@
+{
+  "name": "peace-shop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "가족 공용화폐 피스로 운영하는 가정용 상점",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}

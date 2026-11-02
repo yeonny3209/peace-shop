@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: peace-shop
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/state
+    envVars:
+      # Upstash Redis(무료)의 REST 주소/토큰 — Render 화면에서 직접 입력
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      # 처음 만들 때 넣을 가족과 시작 피스 (예: 이름:피스,이름:피스)
+      - key: SEED_MEMBERS
+        sync: false

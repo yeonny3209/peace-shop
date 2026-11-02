@@ -1,5 +1,7 @@
-/* 피스 상점 서버 — 의존성 없는 Node.js 서버. 정적 파일 + 공유 저장소(JSON 파일) API.
- * 실행: node server.js  (포트 변경: PORT=8080 node server.js) */
+/* 피스 상점 서버 — 의존성 없는 Node.js(18+) 서버. 정적 파일 + 공유 저장소 API.
+ * 저장소: UPSTASH_REDIS_REST_URL/TOKEN이 있으면 Upstash Redis(Render 등 클라우드용),
+ *         없으면 DATA_DIR(기본 ./data)의 JSON 파일.
+ * 실행: node server.js  (포트: PORT 환경변수) */
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -9,9 +11,9 @@ const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
-const STATE_FILE = path.join(DATA_DIR, 'state.json');
-const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const DEFAULT_PASSWORD = '1234';
 const STATIC = {
   '/': 'index.html', '/index.html': 'index.html', '/guide.html': 'guide.html',
@@ -22,21 +24,69 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const uid = () => Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } };
-const writeJson = (file, data) => {
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, file);
-};
+// ---------- 저장소 ----------
+const store = REDIS_URL
+  ? {
+    label: 'Upstash Redis',
+    async cmd(args) {
+      const res = await fetch(REDIS_URL, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${REDIS_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      if (!res.ok) throw new Error(`redis ${res.status}`);
+      return (await res.json()).result;
+    },
+    async get(key) { const v = await this.cmd(['GET', `peace-shop:${key}`]); return v ? JSON.parse(v) : null; },
+    async set(key, val) { await this.cmd(['SET', `peace-shop:${key}`, JSON.stringify(val)]); },
+  }
+  : {
+    label: DATA_DIR,
+    async get(key) { try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${key}.json`), 'utf8')); } catch { return null; } },
+    async set(key, val) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      const file = path.join(DATA_DIR, `${key}.json`);
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(val, null, 2));
+      fs.renameSync(tmp, file);
+    },
+  };
 
-let db = readJson(STATE_FILE, { rev: 0, state: null });
-let auth = readJson(AUTH_FILE, { passwordHash: null });
-const tokens = new Set();
+let db = { rev: 0, state: null };
+let auth = { passwordHash: null, secret: null };
+
+// 로그인 토큰은 서버 재시작·잠들기 뒤에도 유지되도록 비밀값에서 계산한다(비밀번호를 바꾸면 무효가 됨).
+const makeToken = () => crypto.createHmac('sha256', auth.secret).update(auth.passwordHash || 'default').digest('hex');
+const passwordOk = (pw) => sha256(String(pw ?? '')) === (auth.passwordHash || sha256(DEFAULT_PASSWORD));
+
+// SEED_MEMBERS="세윤:164,시연:163,소율:71" — 처음 만들어질 때 가족과 시작 피스를 넣는다.
+function seed(state) {
+  if (state.members.length || !process.env.SEED_MEMBERS) return state;
+  const now = Date.now();
+  for (const part of process.env.SEED_MEMBERS.split(',')) {
+    const [name, bal] = part.split(':');
+    const balance = Math.max(0, parseInt(bal, 10) || 0);
+    if (!name?.trim()) continue;
+    const id = uid();
+    state.members.push({ id, name: name.trim(), balance, carry: { math: 0, other: 0 } });
+    state.history.push({ id: `${id}h`, time: now, memberId: id, delta: balance, reason: '시작 잔액', balanceAfter: balance });
+  }
+  return state;
+}
 
 const publicState = (state) => state && { ...state, settings: { ...state.settings, passwordHash: null, passwordSet: !!auth.passwordHash } };
 const view = () => ({ rev: db.rev, state: publicState(db.state) });
-const commit = (state) => { db = { rev: db.rev + 1, state }; writeJson(STATE_FILE, db); };
+const clean = (state) => ({ ...state, settings: { ...state.settings, passwordHash: null, passwordSet: undefined } });
+
+async function commit(state) {
+  const next = { rev: db.rev + 1, state };
+  await store.set('state', next);
+  db = next;
+}
+
+// 쓰기 요청은 하나씩 차례로 처리한다.
+let lock = Promise.resolve();
+const locked = (fn) => { const run = lock.then(fn, fn); lock = run.catch(() => {}); return run; };
 
 // 일반 가족(비로그인)은 구매 요청 추가와 자기 요청 취소만 할 수 있다.
 function mergeFamily(cur, inc) {
@@ -74,73 +124,90 @@ const send = (res, status, data) => {
   res.end(JSON.stringify(data));
 };
 
+const validState = (s) => s && ['members', 'products', 'requests', 'history'].every((k) => Array.isArray(s[k]));
+
 async function api(req, res, url) {
   const t = req.headers['x-token'];
-  const isAdmin = !!t && tokens.has(t);
+  const isAdmin = !!t && t === makeToken();
   if (t && !isAdmin) return send(res, 401, { error: 'login required' });
 
   if (url === '/api/state' && req.method === 'GET') return send(res, 200, view());
 
   if (url === '/api/state' && req.method === 'PUT') {
     const { rev, state } = await body(req);
-    if (!state || !Array.isArray(state.members) || !Array.isArray(state.products) || !Array.isArray(state.requests) || !Array.isArray(state.history)) {
-      return send(res, 400, { error: 'bad state' });
-    }
-    if (isAdmin) {
-      if (rev !== db.rev) return send(res, 409, view());
-      commit({ ...state, settings: { ...state.settings, passwordHash: null, passwordSet: undefined } });
-    } else if (db.state) {
-      commit(mergeFamily(db.state, state));
-    } else {
-      return send(res, 403, { error: 'not initialised' });
-    }
-    return send(res, 200, view());
+    if (!validState(state)) return send(res, 400, { error: 'bad state' });
+    return locked(async () => {
+      if (isAdmin) {
+        if (rev !== db.rev) return send(res, 409, view());
+        await commit(clean(state));
+      } else if (db.state) {
+        await commit(mergeFamily(db.state, state));
+      } else {
+        return send(res, 403, { error: 'not initialised' });
+      }
+      return send(res, 200, view());
+    });
   }
 
   if (url === '/api/init' && req.method === 'POST') {
-    if (db.state) return send(res, 200, view());
     const { state } = await body(req);
-    if (!state || !Array.isArray(state.members)) return send(res, 400, { error: 'bad state' });
-    commit({ ...state, settings: { ...state.settings, passwordHash: null, passwordSet: undefined } });
-    return send(res, 200, view());
+    if (!validState(state)) return send(res, 400, { error: 'bad state' });
+    return locked(async () => {
+      if (!db.state) await commit(seed(clean(state)));
+      return send(res, 200, view());
+    });
   }
 
   if (url === '/api/login' && req.method === 'POST') {
     const { pw } = await body(req);
-    if (sha256(String(pw ?? '')) !== (auth.passwordHash || sha256(DEFAULT_PASSWORD))) return send(res, 403, { error: 'wrong password' });
-    const token = crypto.randomBytes(24).toString('hex');
-    tokens.add(token);
-    return send(res, 200, { token });
+    if (!passwordOk(pw)) return send(res, 403, { error: 'wrong password' });
+    return send(res, 200, { token: makeToken() });
   }
 
   if (url === '/api/password' && req.method === 'POST') {
     if (!isAdmin) return send(res, 401, { error: 'login required' });
     const { current, next } = await body(req);
-    if (sha256(String(current ?? '')) !== (auth.passwordHash || sha256(DEFAULT_PASSWORD))) return send(res, 403, { error: 'wrong password' });
+    if (!passwordOk(current)) return send(res, 403, { error: 'wrong password' });
     if (String(next ?? '').length < 4) return send(res, 400, { error: 'too short' });
-    auth = { passwordHash: sha256(String(next)) };
-    writeJson(AUTH_FILE, auth);
-    return send(res, 200, { ok: true });
+    return locked(async () => {
+      const updated = { ...auth, passwordHash: sha256(String(next)) };
+      await store.set('auth', updated);
+      auth = updated;
+      return send(res, 200, { ok: true, token: makeToken() });
+    });
   }
 
   return send(res, 404, { error: 'not found' });
 }
 
-http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://x').pathname;
-  try {
-    if (url.startsWith('/api/')) return await api(req, res, url);
-    const file = STATIC[url];
-    if (!file || req.method !== 'GET') { res.writeHead(404); return res.end('Not found'); }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)], 'cache-control': 'no-cache' });
-    fs.createReadStream(path.join(ROOT, file)).pipe(res);
-  } catch (e) {
-    if (!res.headersSent) send(res, 400, { error: 'bad request' });
+async function main() {
+  db = (await store.get('state')) || db;
+  auth = { ...auth, ...(await store.get('auth')) };
+  if (!auth.secret) {
+    auth.secret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+    await store.set('auth', auth);
   }
-}).listen(PORT, '0.0.0.0', () => {
-  console.log(`피스 상점 서버가 켜졌어요 (데이터: ${STATE_FILE})`);
-  console.log(`  이 컴퓨터:  http://localhost:${PORT}`);
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const i of list || []) if (i.family === 'IPv4' && !i.internal) console.log(`  같은 와이파이의 가족 기기:  http://${i.address}:${PORT}`);
-  }
-});
+  if (!db.state && process.env.SEED_MEMBERS) console.log('처음 실행: 웹페이지가 처음 열릴 때 SEED_MEMBERS 가족이 만들어져요');
+
+  http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://x').pathname;
+    try {
+      if (url.startsWith('/api/')) return await api(req, res, url);
+      const file = STATIC[url];
+      if (!file || (req.method !== 'GET' && req.method !== 'HEAD')) { res.writeHead(404); return res.end('Not found'); }
+      res.writeHead(200, { 'content-type': TYPES[path.extname(file)], 'cache-control': 'no-cache' });
+      fs.createReadStream(path.join(ROOT, file)).pipe(res);
+    } catch (e) {
+      console.error(e.message);
+      if (!res.headersSent) send(res, e.message.startsWith('redis') ? 502 : 400, { error: 'request failed' });
+    }
+  }).listen(PORT, '0.0.0.0', () => {
+    console.log(`피스 상점 서버가 켜졌어요 (저장소: ${store.label})`);
+    console.log(`  이 컴퓨터:  http://localhost:${PORT}`);
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const i of list || []) if (i.family === 'IPv4' && !i.internal) console.log(`  같은 와이파이의 가족 기기:  http://${i.address}:${PORT}`);
+    }
+  });
+}
+
+main().catch((e) => { console.error('서버를 시작하지 못했어요:', e.message); process.exit(1); });

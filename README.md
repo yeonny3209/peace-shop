@@ -21,18 +21,35 @@
 
 ## 서버 (공유 저장소)
 
-`server.js`는 설치할 것이 없는 Node.js 서버입니다. 사이트를 보여주고, 잔액·상품·내역을 `data/state.json`에 저장해 모든 기기가 같은 데이터를 봅니다.
+`server.js`는 설치할 것이 없는 Node.js(18+) 서버입니다. 사이트를 보여주고, 잔액·상품·내역을 저장해 모든 기기가 같은 데이터를 봅니다. 엄마 비밀번호는 서버에서 확인하고, 로그인하지 않은 가족은 구매 요청과 자기 요청 취소만 할 수 있어요.
+
+저장소는 환경변수로 고릅니다.
+
+| 환경변수 | 설명 |
+| --- | --- |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | 있으면 Upstash Redis(무료)에 저장 — Render 같은 클라우드용 |
+| `DATA_DIR` | 위 값이 없을 때 JSON 파일을 저장할 폴더 (기본 `./data`, git에 올라가지 않음) |
+| `SEED_MEMBERS` | 처음 만들 때 넣을 가족과 시작 피스. 예: `이름:100,이름:50` |
+| `PORT` | 포트 (기본 3000, Render는 자동) |
+
+### 내 컴퓨터에서 켜기
 
 ```bash
 node server.js
 ```
 
-Windows에서는 `start-server.bat`을 더블클릭해도 됩니다. 켜면 `http://localhost:3000`과 같은 와이파이의 가족 기기용 주소(`http://192.168.x.x:3000`)가 나옵니다.
+Windows에서는 `start-server.bat`을 더블클릭해도 됩니다. 같은 와이파이의 가족 기기용 주소도 함께 나옵니다. 컴퓨터가 켜져 있어야 접속할 수 있어요.
 
-- 서버를 켠 컴퓨터가 켜져 있어야 가족들이 접속할 수 있어요.
-- 엄마 비밀번호는 서버에서 확인하고, 로그인하지 않은 가족은 구매 요청과 자기 요청 취소만 할 수 있어요.
-- `data/`는 git에 올라가지 않아요. 백업하려면 이 폴더를 복사하세요.
-- GitHub Pages 주소는 서버 없이 열리므로 이 기기에만 저장하는 모드로 동작해요.
+### Render에 올리기 (24시간 접속)
+
+1. [Upstash](https://upstash.com)에서 Redis 데이터베이스를 만들고 REST 주소와 토큰을 복사합니다.
+2. Render에서 이 저장소로 **New › Blueprint**를 만들면 `render.yaml`을 읽어 서버가 만들어집니다.
+3. 물어보는 환경변수 3개(`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `SEED_MEMBERS`)를 입력합니다.
+4. 배포가 끝나면 나오는 `https://….onrender.com` 주소를 가족에게 알려 줍니다.
+
+Render 무료 서버는 15분 동안 접속이 없으면 잠들어서 다음 첫 접속에 약 1분 걸려요. 데이터는 Upstash에 있어서 잠들어도 사라지지 않아요.
+
+GitHub Pages 주소는 서버 없이 열리므로 그 기기에만 저장하는 모드로 동작해요.
 
 ## 기획서에서 정해지지 않은 항목의 기본값
 

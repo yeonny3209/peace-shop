@@ -752,6 +752,7 @@
         if (server.on) {
           const r = await api('api/password', { current: String(fd.get('current')), next: String(fd.get('next')) });
           if (!r.ok) { toast('비밀번호를 바꾸지 못했어요'); return; }
+          safeSet(sessionStorage, TOKEN_KEY, r.data.token);
         } else {
           state.settings.passwordHash = await sha256(String(fd.get('next')));
           save();
