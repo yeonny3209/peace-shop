@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>피스 상점 사용 안내</title>
+  <meta name="description" content="엄마와 가족을 위한 피스 상점 소개 및 사용법">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='30' fill='%23f2b33d'/><text x='32' y='44' font-size='34' text-anchor='middle' font-family='Arial' font-weight='bold' fill='%23fff'>P</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .guide { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+    .guide section { margin-top: 32px; }
+    .guide h2 { font-family: "Gowun Dodum", sans-serif; font-size: 1.45rem; margin-bottom: 12px; }
+    .guide p { margin: 0 0 10px; }
+    .cover { text-align: center; padding: 36px 16px 8px; }
+    .cover .coin { width: 72px; height: 72px; font-size: 2.2rem; margin-bottom: 12px; }
+    .cover h1 { font-family: "Gowun Dodum", sans-serif; font-size: clamp(1.9rem, 6vw, 2.6rem); }
+    .cover p { color: var(--muted); max-width: 32em; margin: 10px auto 18px; }
+    .toc { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .toc a { text-decoration: none; }
+    .steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+    .steps li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+    .steps li::before {
+      content: counter(s); display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+      background: var(--accent); color: var(--accent-ink); font-weight: 700;
+    }
+    .steps b { display: block; }
+    .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .rule { text-align: center; }
+    .rule .big { font-size: 1.8rem; display: block; }
+    .rule strong { display: block; font-size: 1.05rem; margin: 4px 0; }
+    .flow { display: flex; align-items: stretch; justify-content: center; gap: 6px; flex-wrap: wrap; }
+    .flow .card { padding: 12px 14px; text-align: center; min-width: 120px; flex: 1; }
+    .flow .arrow { align-self: center; color: var(--muted); font-size: 1.3rem; }
+    .tip { background: var(--gold-soft); border-radius: 12px; padding: 12px 14px; font-size: .92rem; margin-top: 12px; }
+    .tip.warn { background: var(--danger-soft); }
+    .cta { text-align: center; margin-top: 36px; }
+    .cta .btn { font-size: 1.05rem; padding: 12px 26px; text-decoration: none; display: inline-block; }
+    code { background: var(--surface-2); padding: 1px 7px; border-radius: 6px; font-size: .92em; }
+    details { border-bottom: 1px dashed var(--line); padding: 10px 0; }
+    summary { cursor: pointer; font-weight: 700; }
+    details p { margin: 8px 0 0; color: var(--muted); }
+    @media print { .topbar, .cta { display: none; } body { background: #fff; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <span class="coin">P</span>
+      <span class="brand-text"><strong>피스 상점</strong><small>사용 안내</small></span>
+    </a>
+    <a class="btn sm primary" href="index.html" style="text-decoration:none">상점 열기</a>
+  </header>
+
+  <main class="guide">
+    <div class="cover">
+      <span class="coin">P</span>
+      <h1>우리 집 피스 상점에 오신 걸 환영해요!</h1>
+      <p>공부로 피스를 벌고, 상점에서 간식과 게임시간을 사는 우리 가족만의 가게예요. 엄마는 관리를, 나머지 가족은 구경과 구매 요청을 해요.</p>
+      <nav class="toc" aria-label="목차">
+        <a class="chip" href="#what">피스란?</a>
+        <a class="chip" href="#earn">피스 버는 법</a>
+        <a class="chip" href="#family">가족 사용법</a>
+        <a class="chip" href="#mom">엄마 사용법</a>
+        <a class="chip" href="#faq">자주 묻는 질문</a>
+      </nav>
+    </div>
+
+    <section id="what">
+      <h2>🪙 피스가 뭐예요?</h2>
+      <p>시골이라 배달이 어려워 간식이 부족한 우리 집을 위해 만든 <strong>가족 공용화폐</strong>예요. 문제집을 풀면 피스가 쌓이고, 상점에서 원하는 것으로 바꿀 수 있어요.</p>
+      <div class="rules">
+        <div class="card rule"><span class="big">🎮</span><strong>1피스</strong><span class="muted">게임시간 10분<br>= 1,000원</span></div>
+        <div class="card rule"><span class="big">➗</span><strong>수학 2장</strong><span class="muted">= 1피스</span></div>
+        <div class="card rule"><span class="big">📖</span><strong>그 외 과목 3장</strong><span class="muted">= 1피스</span></div>
+        <div class="card rule"><span class="big">🏆</span><strong>문제집 완주</strong><span class="muted">+20피스<br>(오답까지 끝내기, 엄마 확인)</span></div>
+      </div>
+      <p class="tip">하루에 벌 수 있는 피스에는 <strong>상한이 없어요</strong>. 열심히 풀수록 많이 벌어요!</p>
+    </section>
+
+    <section id="earn">
+      <h2>📚 피스 버는 법</h2>
+      <div class="flow">
+        <div class="card"><span class="big">✏️</span><br><strong>문제집 풀기</strong></div>
+        <span class="arrow" aria-hidden="true">→</span>
+        <div class="card"><span class="big">🙋</span><br><strong>엄마에게 장수 알리기</strong></div>
+        <span class="arrow" aria-hidden="true">→</span>
+        <div class="card"><span class="big">🪙</span><br><strong>피스 자동 적립</strong></div>
+      </div>
+      <p style="margin-top:14px">예를 들어 수학 7장을 풀면 3피스를 받고, <strong>남은 1장은 다음에 더해져요</strong>. 다음에 수학 1장만 더 풀어도 2장이 되어 1피스가 돼요. (엄마가 설정에서 “버림”으로 바꿀 수도 있어요.)</p>
+      <p>문제집을 <strong>한 권 끝까지 풀고 오답까지 끝냈다면</strong> 상점 화면의 <strong>‘문제집 완주 신고’</strong> 버튼을 눌러요. 엄마가 확인하고 승인하면 +20피스!</p>
+    </section>
+
+    <section id="family">
+      <h2>🧒 가족(아이들) 사용법</h2>
+      <ol class="steps">
+        <li><div><b>상점 열기</b>링크를 열고 위쪽에서 <strong>내 이름</strong>을 눌러요. 내 피스 잔액이 크게 보여요.</div></li>
+        <li><div><b>상품 둘러보기</b>게임시간, 먹을 것, 특권, 물건 같은 분류를 눌러 골라봐요. 가격과 남은 수량이 적혀 있어요.</div></li>
+        <li><div><b>구매 요청</b>사고 싶은 상품의 <strong>‘구매 요청’</strong>을 누르고 확인해요. 피스가 모자라면 버튼이 눌리지 않아요.</div></li>
+        <li><div><b>엄마 승인 기다리기</b>엄마가 승인하면 그때 잔액에서 피스가 빠져요. 마음이 바뀌면 ‘승인 대기 중인 요청’에서 <strong>취소</strong>할 수 있어요.</div></li>
+        <li><div><b>내역 확인</b>아래쪽 ‘최근 내역’에서 언제 얼마를 벌고 썼는지 볼 수 있어요.</div></li>
+      </ol>
+      <p class="tip">품절 상품은 살 수 없어요. 승인 대기 중인 피스는 다른 상품을 살 때 미리 빼고 계산해서, 가진 것보다 많이 요청할 수 없어요.</p>
+    </section>
+
+    <section id="mom">
+      <h2>👩 엄마 사용법</h2>
+      <p>상점 위쪽 <strong>‘엄마 화면’</strong>을 누르고 비밀번호를 입력해요. <span class="badge gold">처음 비밀번호 <code>1234</code></span> — <strong>설정에서 꼭 바꿔 주세요.</strong></p>
+
+      <div class="stack" style="margin-top:14px">
+        <div class="card">
+          <h3>① 처음 한 번만: 가족 등록</h3>
+          <p class="muted" style="margin:6px 0 0"><strong>가족·잔액</strong> 탭에서 이름과 <strong>시작 피스</strong>를 입력해 추가해요. 가족별 시작 잔액은 정해 둔 값으로 넣어 주세요.</p>
+        </div>
+        <div class="card">
+          <h3>② 문제집 장수 입력 → 자동 적립</h3>
+          <p class="muted" style="margin:6px 0 0"><strong>문제집 적립</strong> 탭에서 누가, 과목(수학/그 외), 푼 장수를 넣으면 몇 피스가 쌓이는지 미리 보여주고, 적립하면 내역에 기록돼요. 남은 장수는 자동으로 이월돼요.</p>
+        </div>
+        <div class="card">
+          <h3>③ 승인하기</h3>
+          <p class="muted" style="margin:6px 0 0"><strong>승인</strong> 탭(빨간 숫자가 대기 건수)에서 구매 요청과 완주 신고를 승인/거절해요. 구매 승인 시 상품 가격만큼 잔액이 줄고 재고가 1 줄어요. 잔액 부족이나 품절이면 승인 버튼이 막혀요.</p>
+        </div>
+        <div class="card">
+          <h3>④ 상품과 재고 관리</h3>
+          <p class="muted" style="margin:6px 0 0"><strong>상품 관리</strong> 탭에서 상품을 추가·수정·삭제하고, ＋/− 로 재고를 바로 조절해요. 재고를 비워 두면 <strong>무제한</strong>(게임시간·특권권 같은 것)이에요. 간식 종류와 가격은 가족 회의로 정한 값으로 바꿔 주세요.</p>
+        </div>
+        <div class="card">
+          <h3>⑤ 내역과 잔액 직접 조정</h3>
+          <p class="muted" style="margin:6px 0 0"><strong>내역</strong> 탭에서 누가 언제 얼마를 벌고 썼는지 모두 볼 수 있어요. <strong>가족·잔액</strong> 탭의 ‘잔액 조정’으로 심부름 보상처럼 직접 더하거나 뺄 수 있고, 사유가 내역에 남아요.</p>
+        </div>
+      </div>
+
+      <div class="tip warn" style="margin-top:14px">
+        <strong>꼭 알아두세요 — 데이터는 한 기기에 저장돼요.</strong><br>
+        기록은 <u>엄마가 승인·관리하는 그 기기의 브라우저</u>에 저장돼요. 아이들 기기에서는 같은 잔액이 보이지 않아요. 그래서 <strong>한 기기(예: 엄마 폰이나 거실 태블릿)에서 함께 쓰는 것</strong>을 추천해요. 브라우저 방문 기록·사이트 데이터를 지우면 기록도 사라지니, <strong>설정 › 백업 파일 저장</strong>으로 가끔 백업해 두세요. 다른 기기로 옮길 때는 ‘백업 불러오기’를 쓰면 돼요.
+      </div>
+    </section>
+
+    <section id="faq">
+      <h2>❓ 자주 묻는 질문</h2>
+      <details><summary>비밀번호를 잊어버렸어요.</summary><p>비밀번호는 이 기기에만 저장돼서 복구할 수 없어요. 설정을 초기화하려면 브라우저의 이 사이트 데이터를 지우면 처음 비밀번호(1234)로 돌아가지만 기록도 함께 사라져요. 그래서 백업을 미리 해 두세요.</p></details>
+      <details><summary>다른 기기에서도 같은 잔액을 보고 싶어요.</summary><p>지금은 서버가 없어 자동 공유는 안 돼요. 설정의 백업 저장/불러오기로 옮길 수 있고, 여러 기기에서 실시간으로 보려면 나중에 공유 저장소를 연결해야 해요.</p></details>
+      <details><summary>남는 장수는 어떻게 되나요?</summary><p>기본은 다음 입력에 이월이에요. 설정에서 ‘버림’으로 바꿀 수 있어요.</p></details>
+      <details><summary>피스를 현금으로 바꿀 수 있나요?</summary><p>환전 상품은 도입 여부를 아직 정하지 않아서 비어 있어요. 가족 회의에서 정하면 ‘환전’ 분류로 상품을 추가하면 돼요.</p></details>
+      <details><summary>가족끼리 피스를 보낼 수 있나요?</summary><p>아직 허용 여부를 정하지 않아 기능을 넣지 않았어요. 필요하면 엄마가 ‘잔액 조정’으로 처리할 수 있어요.</p></details>
+      <details><summary>잘못 승인했어요.</summary><p>‘잔액 조정’으로 되돌리고 사유를 적어 두면 내역에 남아요. 재고는 상품 관리에서 ＋로 맞춰요.</p></details>
+    </section>
+
+    <div class="cta">
+      <a class="btn primary" href="index.html">🛒 피스 상점 열기</a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <p>피스 상점 · 1피스 = 게임시간 10분 = 1,000원</p>
+  </footer>
+</body>
+</html>
