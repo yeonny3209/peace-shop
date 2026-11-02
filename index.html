@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>피스 상점</title>
+  <meta name="description" content="가족 공용화폐 피스로 운영하는 우리 집 상점">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='30' fill='%23f2b33d'/><text x='32' y='44' font-size='34' text-anchor='middle' font-family='Arial' font-weight='bold' fill='%23fff'>P</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#shop">
+      <span class="coin">P</span>
+      <span class="brand-text">
+        <strong>피스 상점</strong>
+        <small>우리 집 공용화폐 상점</small>
+      </span>
+    </a>
+    <nav class="mainnav">
+      <a href="#shop" data-route="shop">상점</a>
+      <a href="#admin" data-route="admin">엄마 화면</a>
+    </nav>
+  </header>
+
+  <main id="app"></main>
+
+  <footer class="footer">
+    <p>1피스 = 게임시간 10분 = 1,000원 · 수학 2장 = 1피스 · 그 외 문제집 3장 = 1피스 · 문제집 완주 +20피스</p>
+    <p class="muted">데이터는 이 기기의 브라우저에 저장됩니다. 엄마 화면 › 설정에서 백업할 수 있어요.</p>
+  </footer>
+
+  <dialog id="modal"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
