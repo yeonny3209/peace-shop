@@ -606,11 +606,15 @@
       openModal(`
         <h3>${h(m.name)} 잔액 조정</h3>
         <p class="muted" style="margin:0">현재 ${fmt(m.balance)}피스</p>
-        <label class="field">변동 피스 (빼려면 음수, 예: -3)<input type="number" name="delta" step="1" required></label>
+        <div class="form-grid">
+          <label class="field">더할까요, 뺄까요?
+            <select name="sign"><option value="1">＋ 더하기</option><option value="-1">－ 빼기</option></select></label>
+          <label class="field">피스 수<input type="number" name="amount" min="1" step="1" inputmode="numeric" placeholder="예: 3" required></label>
+        </div>
         <label class="field">사유<input name="reason" placeholder="예: 심부름 보상" required maxlength="40"></label>
         <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">적용</button></div>`, (fd) => {
-        const d = parseInt(fd.get('delta'), 10);
-        if (!d) { toast('0이 아닌 숫자를 입력해 주세요'); return false; }
+        const d = (parseInt(fd.get('amount'), 10) || 0) * parseInt(fd.get('sign'), 10);
+        if (!d) { toast('1 이상의 숫자를 입력해 주세요'); return false; }
         if (m.balance + d < 0) { toast('잔액이 0보다 작아질 수 없어요'); return false; }
         record(m.id, d, `직접 조정: ${String(fd.get('reason')).trim()}`);
         save(); render(); toast('잔액을 조정했어요');
