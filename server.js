@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const webpush = require('web-push');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
@@ -17,9 +18,10 @@ const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const DEFAULT_PASSWORD = '1234';
 const STATIC = {
   '/': 'index.html', '/index.html': 'index.html', '/guide.html': 'guide.html',
-  '/style.css': 'style.css', '/app.js': 'app.js',
+  '/style.css': 'style.css', '/app.js': 'app.js', '/sw.js': 'sw.js', '/manifest.json': 'manifest.json',
+  '/icon-192.png': 'icon-192.png', '/icon-512.png': 'icon-512.png', '/apple-touch-icon.png': 'apple-touch-icon.png',
 };
-const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/manifest+json', '.png': 'image/png' };
 
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const uid = () => Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
@@ -53,7 +55,8 @@ const store = REDIS_URL
   };
 
 let db = { rev: 0, state: null };
-let auth = { passwordHash: null, secret: null };
+let auth = { passwordHash: null, secret: null, vapid: null };
+let subs = []; // 알림을 받을 엄마 기기들(Web Push 구독)
 
 // 로그인 토큰은 서버 재시작·잠들기 뒤에도 유지되도록 비밀값에서 계산한다(비밀번호를 바꾸면 무효가 됨).
 const makeToken = () => crypto.createHmac('sha256', auth.secret).update(auth.passwordHash || 'default').digest('hex');
@@ -107,7 +110,29 @@ function mergeFamily(cur, inc) {
       out.requests.push({ ...base, type: 'bonus', title: String(r.title || '').slice(0, 40) });
     }
   }
-  return out;
+  return { state: out, added: out.requests.filter((r) => !byId.has(r.id)) };
+}
+
+// ---------- 알림 (Web Push) ----------
+async function pushAll(payload) {
+  const dead = new Set();
+  await Promise.all(subs.map((s) => webpush.sendNotification(s, JSON.stringify(payload), { TTL: 86400 }).catch((e) => {
+    if (e.statusCode === 404 || e.statusCode === 410) dead.add(s.endpoint);
+    else console.error('push 실패', e.statusCode || e.message);
+  })));
+  if (dead.size) {
+    subs = subs.filter((s) => !dead.has(s.endpoint));
+    await store.set('push', subs);
+  }
+}
+
+async function notify(added, state) {
+  if (!subs.length) return;
+  for (const r of added) {
+    const name = state.members.find((m) => m.id === r.memberId)?.name || '가족';
+    const body = r.type === 'purchase' ? `${name}: ${r.productName} 구매 요청 (${r.price}피스)` : `${name}: 📚 ${r.title} 완주 신고`;
+    await pushAll({ title: '피스 상점 새 요청', body, url: '/#admin' });
+  }
 }
 
 function body(req) {
@@ -141,7 +166,9 @@ async function api(req, res, url) {
         if (rev !== db.rev) return send(res, 409, view());
         await commit(clean(state));
       } else if (db.state) {
-        await commit(mergeFamily(db.state, state));
+        const { state: next, added } = mergeFamily(db.state, state);
+        await commit(next);
+        notify(added, next).catch((e) => console.error('push 실패', e.message));
       } else {
         return send(res, 403, { error: 'not initialised' });
       }
@@ -156,6 +183,35 @@ async function api(req, res, url) {
       if (!db.state) await commit(seed(clean(state)));
       return send(res, 200, view());
     });
+  }
+
+  if (url === '/api/push/key' && req.method === 'GET') return send(res, 200, { key: auth.vapid.publicKey });
+
+  if (url === '/api/push/subscribe' && req.method === 'POST') {
+    if (!isAdmin) return send(res, 401, { error: 'login required' });
+    const { subscription: sub } = await body(req);
+    if (!String(sub?.endpoint).startsWith('https://') || !sub.keys?.p256dh || !sub.keys?.auth) return send(res, 400, { error: 'bad subscription' });
+    return locked(async () => {
+      subs = [...subs.filter((s) => s.endpoint !== sub.endpoint), { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } }];
+      await store.set('push', subs);
+      return send(res, 200, { ok: true, devices: subs.length });
+    });
+  }
+
+  if (url === '/api/push/unsubscribe' && req.method === 'POST') {
+    if (!isAdmin) return send(res, 401, { error: 'login required' });
+    const { endpoint } = await body(req);
+    return locked(async () => {
+      subs = subs.filter((s) => s.endpoint !== endpoint);
+      await store.set('push', subs);
+      return send(res, 200, { ok: true, devices: subs.length });
+    });
+  }
+
+  if (url === '/api/push/test' && req.method === 'POST') {
+    if (!isAdmin) return send(res, 401, { error: 'login required' });
+    await pushAll({ title: '피스 상점', body: '알림이 잘 와요! 🎉', url: '/#admin' });
+    return send(res, 200, { ok: true, devices: subs.length });
   }
 
   if (url === '/api/login' && req.method === 'POST') {
@@ -187,6 +243,12 @@ async function main() {
     auth.secret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
     await store.set('auth', auth);
   }
+  if (!auth.vapid) {
+    auth.vapid = webpush.generateVAPIDKeys();
+    await store.set('auth', auth);
+  }
+  subs = (await store.get('push')) || [];
+  webpush.setVapidDetails(process.env.RENDER_EXTERNAL_URL || 'https://peace-shop.onrender.com', auth.vapid.publicKey, auth.vapid.privateKey);
   if (!db.state && process.env.SEED_MEMBERS) console.log('처음 실행: 웹페이지가 처음 열릴 때 SEED_MEMBERS 가족이 만들어져요');
 
   http.createServer(async (req, res) => {

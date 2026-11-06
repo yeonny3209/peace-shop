@@ -110,9 +110,36 @@
       const res = await fetch('api/state', { cache: 'no-store' });
       if (!res.ok) return;
       const j = await res.json();
-      if (j.rev !== server.rev && !server.inflight) { adopt(j); render(); }
+      if (j.rev !== server.rev && !server.inflight) {
+        const before = pendingTotal();
+        adopt(j);
+        if (isAuthed() && pendingTotal() > before) toast('🔔 새 요청이 왔어요');
+        render();
+      }
     } catch { /* 일시적인 연결 끊김 */ }
   }
+
+  // ---------- 알림 (Web Push) ----------
+  const push = { supported: false, subscribed: false, denied: false };
+  const keyBytes = (b64) => {
+    const raw = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  };
+
+  async function pushInit() {
+    push.supported = server.on && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    if (!push.supported) return;
+    try {
+      const reg = await navigator.serviceWorker.register('sw.js');
+      await navigator.serviceWorker.ready;
+      push.subscribed = !!(await reg.pushManager.getSubscription());
+      push.denied = Notification.permission === 'denied';
+    } catch {
+      push.supported = false;
+    }
+  }
+
+  const pendingTotal = () => state.requests.filter((r) => r.status === 'pending').length;
 
   async function api(path, payload) {
     const res = await fetch(path, {
@@ -502,9 +529,29 @@
     </section>`;
   }
 
+  function pushCard() {
+    let inner;
+    if (!server.on) {
+      inner = '<p class="muted" style="margin:0;font-size:.85rem">서버 주소(onrender.com)로 열었을 때만 알림을 쓸 수 있어요.</p>';
+    } else if (!push.supported) {
+      inner = '<p class="muted" style="margin:0;font-size:.85rem">이 브라우저에서는 알림을 쓸 수 없어요. 아이폰은 사파리에서 공유 › <strong>홈 화면에 추가</strong>를 한 뒤, 홈 화면의 아이콘으로 열어 주세요. (iOS 16.4 이상)</p>';
+    } else if (push.denied) {
+      inner = '<p class="muted" style="margin:0;font-size:.85rem">알림이 차단되어 있어요. 브라우저의 사이트 설정에서 알림을 <strong>허용</strong>으로 바꾼 뒤 다시 눌러 주세요.</p>'
+        + '<div><button class="btn primary" data-action="push-on">알림 다시 켜기</button></div>';
+    } else if (push.subscribed) {
+      inner = '<p style="margin:0"><span class="badge green">이 기기에서 알림 받는 중</span></p>'
+        + '<div class="row"><button class="btn" data-action="push-test">테스트 알림 보내기</button><button class="btn danger" data-action="push-off">알림 끄기</button></div>';
+    } else {
+      inner = '<p class="muted" style="margin:0;font-size:.85rem">가족이 구매 요청이나 완주 신고를 하면 이 기기로 알림이 와요. 엄마 폰에서 켜 주세요.</p>'
+        + '<div><button class="btn primary" data-action="push-on">🔔 이 기기에서 알림 받기</button></div>';
+    }
+    return `<section class="card stack" style="gap:12px"><h3>새 요청 알림</h3>${inner}</section>`;
+  }
+
   function adminSettings() {
     const carry = state.settings.leftover === 'carry';
     return `<div class="grid-2">
+      ${pushCard()}
       <section class="card stack" style="gap:12px">
         <h3>비밀번호 변경</h3>
         <form id="password-form" class="stack" style="gap:10px">
@@ -667,6 +714,48 @@
       save();
     },
 
+    'push-on': async () => {
+      try {
+        const perm = await Notification.requestPermission();
+        push.denied = perm === 'denied';
+        if (perm !== 'granted') { toast('알림을 허용해 주세요'); render(); return false; }
+        const reg = await navigator.serviceWorker.ready;
+        const { key } = await (await fetch('api/push/key')).json();
+        const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+        const r = await api('api/push/subscribe', { subscription: sub.toJSON() });
+        if (!r.ok) throw new Error('subscribe');
+        push.subscribed = true;
+        toast('이 기기로 알림을 받아요 🔔');
+      } catch {
+        toast('알림을 켜지 못했어요');
+      }
+      render();
+      return false;
+    },
+
+    'push-off': async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await api('api/push/unsubscribe', { endpoint: sub.endpoint });
+          await sub.unsubscribe();
+        }
+        push.subscribed = false;
+        toast('알림을 껐어요');
+      } catch {
+        toast('알림을 끄지 못했어요');
+      }
+      render();
+      return false;
+    },
+
+    'push-test': async () => {
+      const r = await api('api/push/test', {});
+      toast(r.ok ? '테스트 알림을 보냈어요' : '보내지 못했어요');
+      return false;
+    },
+
     export: () => {
       const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -818,6 +907,7 @@
         const note = $('#footer-note');
         if (note) note.textContent = '데이터는 서버에 저장돼요. 같은 주소로 접속한 모든 기기에서 같은 잔액을 볼 수 있어요.';
         setInterval(poll, 4000);
+        await pushInit();
       }
     } catch { /* 서버 없음: 이 기기 저장 모드 */ }
     ready = true;
