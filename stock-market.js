@@ -153,10 +153,12 @@
         baseBefore: c.basePrice, baseAfter: after, priceBefore: c.basePrice + demand, priceAfter: after + demand, time: now });
       c.basePrice = after; c.quoteVersion += 1;
       expire(state, c.id, now);
-    } else if (action === 'request') {
+    } else if (action === 'request' || action === 'buy') {
+      if (action === 'buy' && payload.side !== 'buy') fail('즉시 체결은 매수만 가능해요.');
       checkId();
       const existing = state.requests.find((r) => r.id === id);
       if (existing) {
+        if (action === 'buy' && existing.status !== 'approved') fail('새 매수 화면에서 다시 시도해 주세요.', 409);
         if (existing.type !== 'stock' || existing.memberId !== payload.memberId || existing.companyId !== payload.companyId
           || existing.side !== payload.side || existing.quantity !== payload.quantity || existing.price !== payload.total
           || existing.quoteVersion !== payload.quoteVersion) fail('이미 사용한 요청 번호예요.');
@@ -172,6 +174,9 @@
       const c = company(state, payload.companyId);
       state.requests.push({ id, type: 'stock', memberId: m.id, companyId: c.id, companyName: c.name, side: payload.side,
         quantity: payload.quantity, price: q.total, quoteVersion: q.quoteVersion, time: now, status: 'pending' });
+      if (action === 'buy') {
+        return apply(state, 'decide', { requestId: id, approve: true }, { isAdmin: true, now });
+      }
     } else if (action === 'cancel' || action === 'decide') {
       if (action === 'decide') requireAdmin(options);
       const r = state.requests.find((r) => r.id === payload.requestId && r.type === 'stock');

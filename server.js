@@ -65,6 +65,25 @@ let subs = []; // 알림을 받을 엄마 기기들(Web Push 구독)
 // 로그인 토큰은 서버 재시작·잠들기 뒤에도 유지되도록 비밀값에서 계산한다(비밀번호를 바꾸면 무효가 됨).
 const makeToken = () => crypto.createHmac('sha256', auth.secret).update(auth.passwordHash || 'default').digest('hex');
 const passwordOk = (pw) => sha256(String(pw ?? '')) === (auth.passwordHash || sha256(DEFAULT_PASSWORD));
+const buyPinAttempts = new Map();
+const validBuyPin = (pin) => typeof pin === 'string' && /^[0-9]{6}$/.test(pin);
+const hashBuyPin = (pin, salt) => crypto.scryptSync(pin + auth.secret, salt, 32);
+
+function checkBuyPin(memberId, pin) {
+  const saved = auth.buyPins && Object.hasOwn(auth.buyPins, memberId) ? auth.buyPins[memberId] : null;
+  if (!saved) return '엄마 화면의 주식 관리에서 내 매수 PIN을 먼저 설정해 주세요.';
+  const now = Date.now();
+  const previous = buyPinAttempts.get(memberId);
+  const attempts = previous?.until > now ? previous : { count: 0, until: now + 600000 };
+  if (attempts.count >= 5) return 'PIN을 여러 번 틀렸어요. 10분 뒤 다시 시도해 주세요.';
+  if (!validBuyPin(pin) || !crypto.timingSafeEqual(hashBuyPin(pin, saved.salt), Buffer.from(saved.hash, 'hex'))) {
+    attempts.count++;
+    buyPinAttempts.set(memberId, attempts);
+    return '매수 PIN이 맞지 않아요.';
+  }
+  buyPinAttempts.delete(memberId);
+  return null;
+}
 
 // SEED_MEMBERS="세윤:164,시연:163,소율:71" — 처음 만들어질 때 가족과 시작 피스를 넣는다.
 function seed(state) {
@@ -243,10 +262,27 @@ async function api(req, res, url) {
     const payload = await body(req);
     return locked(async () => {
       if (!db.state) return send(res, 403, { error: '상점을 먼저 열어 주세요.' });
+      if (payload.action === 'set-buy-pin' || payload.action === 'buy') {
+        const member = db.state.members.find((m) => m.id === payload.memberId);
+        if (!member) return send(res, 404, { error: '가족을 먼저 선택해 주세요.' });
+        if (payload.action === 'set-buy-pin') {
+          if (!isAdmin) return send(res, 403, { error: '엄마 로그인이 필요해요.' });
+          if (!validBuyPin(payload.pin)) return send(res, 400, { error: '숫자 6자리를 입력해 주세요.' });
+          const salt = crypto.randomBytes(16).toString('hex');
+          const buyPins = { ...auth.buyPins, [member.id]: { salt, hash: hashBuyPin(payload.pin, salt).toString('hex') } };
+          const updated = { ...auth, buyPins };
+          await store.set('auth', updated);
+          auth = updated;
+          buyPinAttempts.delete(member.id);
+          return send(res, 200, view());
+        }
+        const error = checkBuyPin(member.id, payload.pin);
+        if (error) return send(res, 403, { error });
+      }
       const before = new Set(db.state.requests.map((r) => r.id));
       const next = Market.apply(db.state, payload.action, payload, { isAdmin, id: uid });
       await commit(next);
-      const added = next.requests.filter((r) => r.type === 'stock' && !before.has(r.id));
+      const added = next.requests.filter((r) => r.type === 'stock' && r.status === 'pending' && !before.has(r.id));
       if (added.length) notify(added, next).catch((e) => console.error('push 실패', e.message));
       return send(res, 200, view());
     });

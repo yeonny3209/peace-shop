@@ -239,7 +239,7 @@
 
   const requestLabel = (r) => r.type === 'stock' ? `${r.companyName} · ${r.side === 'buy' ? '매수' : '매도'} ${fmt(r.quantity)}주` : r.type === 'purchase' ? `${r.productName} 구매` : `📚 완주 신고 · ${r.title}`;
   const requestDelta = (r) => r.type === 'stock' ? (r.side === 'buy' ? -r.price : r.price) : r.type === 'purchase' ? -r.price : BONUS;
-  const requestStatus = (r) => ({ approved: '승인', rejected: '거절', cancelled: '취소', expired: '가격 변경 · 재요청 필요', pending: '승인 대기' }[r.status] || r.status);
+  const requestStatus = (r) => ({ approved: r.type === 'stock' ? '체결' : '승인', rejected: '거절', cancelled: '취소', expired: '가격 변경 · 재요청 필요', pending: '승인 대기' }[r.status] || r.status);
   const company = (id) => state.market.companies.find((c) => c.id === id);
   const precise = (n) => Number(n).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 
@@ -436,7 +436,7 @@
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
       <p><strong>기준가 + 수요</strong>로 정해져요. 가족 전체가 보유한 주식이 5주 늘 때마다 다음 매수 가격에 1피스가 붙고, 팔면 그만큼 내려가요.</p>
       <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 기준가도 바뀝니다. 여러 주를 한 번에 사고팔면 주마다 단가가 달라질 수 있어 총액을 먼저 보여드려요.</p>
-      <p>매수·매도는 엄마 승인 후 체결됩니다. 대기 중인 피스와 주식은 예약되며, 회사 가격 기준이나 보유량이 바뀌면 대기 요청은 만료되어 다시 요청해야 해요.</p>
+      <p>매수는 내 매수 PIN을 입력하면 즉시 체결돼요. 매도는 엄마 승인 후 체결되며, 회사의 기준가나 총 보유량이 바뀌면 대기 요청은 만료돼요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
   }
@@ -459,7 +459,7 @@
         <div class="card"><span class="muted">보유 주식 매도 예상액</span><strong>${fmt(value)} <small>피스</small></strong><span class="meta">매입 원가 ${precise(cost)}피스</span></div>
         <div class="card"><span class="muted">보유 주식 평가 손익</span><strong class="${value - cost >= 0 ? 'market-positive' : 'market-negative'}">${value - cost >= 0 ? '+' : ''}${precise(value - cost)} <small>피스</small></strong><span class="meta">매도해 확정한 손익 ${realized >= 0 ? '+' : ''}${precise(realized)}피스</span></div>
       </section>
-      <section><div class="section-title"><h2>우리 가족 회사</h2><span class="badge green">엄마 승인 후 거래</span></div>
+      <section><div class="section-title"><h2>우리 가족 회사</h2></div>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c, i) => {
         const held = Market.holding(state, mid, c.id);
         const available = Market.availableShares(state, mid, c.id);
@@ -469,7 +469,7 @@
         return `<article class="card company-card"><div class="spread"><span class="company-symbol" aria-hidden="true">${['🌱', '🍪', '🚀', '🏡'][i % 4]}</span><span class="badge">가족 보유 ${fmt(outstanding)}주</span></div><div><h3>${h(c.name)}</h3><p class="muted company-description">${h(c.description || '함께 키워 가는 우리 가족 회사')}</p></div>
           <div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(price)} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} + 수요 ${fmt(price - c.basePrice)}${sellPrice !== null ? ` · 1주 매도가 ${fmt(sellPrice)}` : ''}</span></div>
           <div class="company-owned"><span>내 보유 <strong>${fmt(held.quantity)}주</strong></span><span class="meta">매도 가능 ${fmt(available)}주</span></div>
-          <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>매수 요청</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>매도 요청</button></div>
+          <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>바로 매수</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>매도 요청</button></div>
         </article>`;
       }).join('')}</div>` : '<div class="card empty"><span class="big">🌱</span><h3>첫 회사를 기다리고 있어요</h3><p>엄마 화면의 ‘주식 관리’에서 회사 이름과 시작 기준가를 정해 주세요.</p><a class="btn primary" href="#admin" data-action="market-admin">회사 만들기</a></div>'}</section>
       ${holdings.length ? `<section class="card"><div class="section-title"><h2>내 보유 주식</h2><span class="muted">현재 기준으로 전량 매도할 때의 예상액</span></div><div class="table-wrap"><table><thead><tr><th>회사</th><th class="right">보유</th><th class="right">평균 매입가</th><th class="right">매도 예상액</th><th class="right">평가 손익</th></tr></thead><tbody>${holdings.map(({ c, held }) => {
@@ -484,9 +484,21 @@
   }
 
   function adminMarket() {
-    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">매수·매도 요청은 ‘승인’ 탭에서 처리해 주세요. 결과를 반영하면 해당 회사의 대기 요청은 만료되고 새 가격으로 다시 요청해야 합니다.</p></section>
+    const pins = server.on && state.members.length ? `<section class="card"><h3>가족별 매수 PIN</h3><p class="muted">가족마다 다른 숫자 6자리 PIN을 정해 해당 가족에게만 알려 주세요. 이 PIN으로 주식을 바로 살 수 있어요.</p><div class="row">${state.members.map((m) => `<button class="btn" data-action="market-pin" data-id="${h(m.id)}">${h(m.name)} PIN 설정</button>`).join('')}</div></section>` : '';
+    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">매도 요청은 ‘승인’ 탭에서 처리해 주세요. 결과를 반영하면 해당 회사의 대기 요청은 만료돼요.</p></section>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
-      <section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
+      ${pins}<section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
+  }
+
+  function openBuyPin(memberId) {
+    const m = member(memberId);
+    if (!m) return false;
+    openModal(`<h3>${h(m.name)} 매수 PIN 설정</h3>
+      <label class="field">새 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="new-password" required></label>
+      <p class="meta">숫자 6자리로 설정해 주세요.</p>
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">PIN 저장</button></div>`, (fd) =>
+      stateAction('api/market', { action: 'set-buy-pin', memberId, pin: fd.get('pin') }, () => state, '매수 PIN을 저장했어요'));
+    return false;
   }
 
   function openTrade(companyId, side) {
@@ -499,13 +511,18 @@
     const requestId = uid();
     let shownQuote = null;
     let shownQuantity = 0;
-    openModal(`<h3>${h(c.name)} ${side === 'buy' ? '매수' : '매도'} 요청</h3><p class="muted">${h(me.name)} · 사용 가능 ${fmt(me.balance - pendingOf(mid))}피스 · 매도 가능 ${fmt(Market.availableShares(state, mid, c.id))}주</p>
+    const buy = side === 'buy';
+    openModal(`<h3>${h(c.name)} ${buy ? '바로 매수' : '매도 요청'}</h3><p class="muted">${h(me.name)} · 사용 가능 ${fmt(me.balance - pendingOf(mid))}피스 · 매도 가능 ${fmt(Market.availableShares(state, mid, c.id))}주</p>
       <label class="field">주식 수량<input type="number" name="quantity" min="1" max="${max}" step="1" inputmode="numeric" value="1" required></label>
-      <div class="preview trade-preview" id="trade-preview" aria-live="polite"></div><p class="meta">엄마 승인 후 ${side === 'buy' ? '피스가 차감되고 주식을 받아요' : '주식이 줄고 피스를 받아요'}. 가격 기준이나 가족의 보유량이 바뀌면 요청은 만료됩니다.</p>
-      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">요청 보내기</button></div>`, async (fd) => {
+      <div class="preview trade-preview" id="trade-preview" aria-live="polite"></div>
+      ${buy && server.on ? '<label class="field">내 매수 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>' : ''}
+      <p class="meta">${buy ? '총액을 확인하고 매수하면 피스가 차감되고 주식이 바로 들어와요.' : '엄마 승인 후 주식이 줄고 피스를 받아요. 주가가 바뀌면 대기 요청은 만료돼요.'}</p>
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">${buy ? '매수 확정' : '요청 보내기'}</button></div>`, async (fd) => {
       const quantity = Number(fd.get('quantity'));
       if (!shownQuote || quantity !== shownQuantity) { toast('수량과 거래 총액을 확인해 주세요'); return false; }
-      return marketAction('request', { id: requestId, memberId: mid, companyId: c.id, side, quantity, quoteVersion: shownQuote.quoteVersion, total: shownQuote.total }, '주식 요청을 보냈어요. 엄마 승인을 기다려 주세요');
+      return marketAction(buy ? 'buy' : 'request', { id: requestId, memberId: mid, companyId: c.id, side, quantity,
+        quoteVersion: shownQuote.quoteVersion, total: shownQuote.total, ...(buy && server.on ? { pin: fd.get('pin') } : {}) },
+      buy ? '주식을 매수했어요' : '매도 요청을 보냈어요. 엄마 승인을 기다려 주세요');
     });
     const input = $('input[name="quantity"]', modal);
     const update = () => {
@@ -844,6 +861,7 @@
   // ---------- Actions ----------
   const actions = {
     'market-buy': (id) => openTrade(id, 'buy'),
+    'market-pin': (id) => openBuyPin(id),
     'market-sell': (id) => openTrade(id, 'sell'),
     'market-create': () => openCompanyCreate(),
     'market-event': (id) => openMarketEvent(id),

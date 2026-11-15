@@ -255,6 +255,32 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
     assert.deepEqual(state.history, legacyState().history);
   });
 
+  test('a family PIN authorizes one immediate buy without exposing the PIN or auto-approving sells', async () => {
+    const { state } = await createCompany();
+    const buy = orderPayload(state, 'instant-buy', 'buy', 6);
+    const pin = '012345';
+    assert.equal((await market('set-buy-pin', { memberId: 'm1', pin })).status, 403);
+    assert.equal((await market('buy', { ...buy, pin })).status, 403);
+    const setup = await market('set-buy-pin', { memberId: 'm1', pin }, true);
+    assert.equal(setup.status, 200);
+    assert.doesNotMatch(JSON.stringify(setup.body), /012345|buyPins/);
+    assert.equal((await market('buy', { ...buy, pin: '999999' })).status, 403);
+    assert.equal((await market('buy', { ...buy, memberId: 'm2', pin })).status, 403);
+    assert.equal((await current()).state.members[0].balance, 1000);
+    const results = await Promise.all([market('buy', { ...buy, pin }), market('buy', { ...buy, pin })]);
+    for (const response of results) {
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.state.members[0].balance, 1000 - buy.total);
+      assert.equal(response.body.state.requests[0].status, 'approved');
+      assert.equal(response.body.state.market.trades.length, 1);
+      assert.equal(Market.holding(response.body.state, 'm1', 'company').quantity, 6);
+    }
+    assert.equal((await market('buy', { ...buy, id: 'stale-buy', pin })).status, 409);
+    const sell = await place('still-pending-sale', 'sell', 1);
+    assert.equal(sell.body.state.requests.at(-1).status, 'pending');
+    assert.equal(Market.holding(sell.body.state, 'm1', 'company').quantity, 6);
+  });
+
   test('company creation, event publication, and trading approval enforce admin authentication', async () => {
     const denied = await market('company-create', { id: 'company', name: '테스트 회사', basePrice: 5 });
     assert.equal(denied.status, 401);
