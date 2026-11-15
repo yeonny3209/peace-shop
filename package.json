@@ -4,7 +4,8 @@
   "private": true,
   "description": "가족 공용화폐 피스로 운영하는 가정용 상점",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test-market.js"
   },
   "engines": {
     "node": ">=18"

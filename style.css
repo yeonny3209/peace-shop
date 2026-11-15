@@ -208,6 +208,57 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* 가족 주식 */
+.market-page { gap: 24px; }
+.market-page h1 { font-family: "Gowun Dodum", sans-serif; font-size: clamp(1.65rem, 5vw, 2.1rem); }
+.market-eyebrow { margin: 0 0 6px; color: var(--accent); font-size: .68rem; font-weight: 700; letter-spacing: .12em; }
+.market-intro { margin: 8px 0 0; font-size: .9rem; }
+.market-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.market-summary .card { display: flex; flex-direction: column; gap: 8px; }
+.market-summary .card > .muted { font-size: .8rem; }
+.market-summary strong { display: block; font-size: clamp(1.4rem, 3vw, 2rem); font-variant-numeric: tabular-nums; }
+.market-summary strong small { font-size: .8rem; font-weight: 500; }
+.market-summary .meta { font-size: .75rem; color: var(--muted); }
+.market-summary .market-cash { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.market-companies { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+.company-card { display: flex; flex-direction: column; gap: 14px; }
+.company-card h3 { font-size: 1.1rem; }
+.company-symbol { display: grid; place-items: center; width: 44px; height: 44px; font-size: 1.55rem; border-radius: 13px; background: var(--surface-2); }
+.company-description { margin: 7px 0 0; font-size: .82rem; min-height: 2.6em; overflow-wrap: anywhere; }
+.company-price { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
+.company-price > .muted { font-size: .78rem; }
+.company-price strong { font-size: 1.8rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.company-price strong small { font-size: .85rem; font-weight: 500; }
+.company-price .meta, .company-owned .meta, .market-page > section > .meta, .market-rules p, dialog .meta { color: var(--muted); font-size: .78rem; }
+.company-owned { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .85rem; border-top: 1px solid var(--line); padding-top: 12px; }
+.market-trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.market-positive { color: var(--accent); }
+.market-negative { color: var(--danger); }
+.market-news li, .market-requests li { align-items: flex-start; }
+.market-news li > div, .market-requests li > div { min-width: 0; overflow-wrap: anywhere; }
+.market-news li > .badge { flex-shrink: 0; margin-top: 6px; }
+.market-requests .badge { margin-top: 6px; }
+.market-rules { box-shadow: none; background: var(--surface-2); }
+.market-rules summary { cursor: pointer; font-weight: 700; font-size: .9rem; }
+.market-rules .stack { gap: 10px; margin-top: 14px; }
+.market-rules p { margin: 0; line-height: 1.75; }
+.trade-preview { display: flex; flex-direction: column; gap: 6px; }
+.trade-preview > strong { font-size: 1.9rem; font-variant-numeric: tabular-nums; }
+.trade-preview > strong small { font-size: .9rem; }
+.trade-preview p { margin: 0; font-size: .8rem; }
+.market-page .section-title { flex-wrap: wrap; }
+.market-page .section-title > .muted { font-size: .75rem; }
+.market-page .grid-2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+
+@media (max-width: 650px) {
+  .market-summary { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .market-summary .market-cash { grid-column: 1 / -1; }
+  .market-summary strong { font-size: 1.5rem; }
+  .market-companies { grid-template-columns: 1fr; }
+  .topbar { flex-wrap: wrap; }
+  .mainnav { margin-left: auto; }
+}
+
 @media (max-width: 480px) {
   .brand-text small { display: none; }
   .mainnav a { padding: 6px 10px; }

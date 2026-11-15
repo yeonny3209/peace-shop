@@ -9,6 +9,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const webpush = require('web-push');
+const Market = require('./stock-market');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
@@ -19,6 +20,7 @@ const DEFAULT_PASSWORD = '1234';
 const STATIC = {
   '/': 'index.html', '/index.html': 'index.html', '/guide.html': 'guide.html',
   '/style.css': 'style.css', '/app.js': 'app.js', '/sw.js': 'sw.js', '/manifest.json': 'manifest.json',
+  '/stock-market.js': 'stock-market.js',
   '/icon-192.png': 'icon-192.png', '/icon-512.png': 'icon-512.png', '/apple-touch-icon.png': 'apple-touch-icon.png',
 };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/manifest+json', '.png': 'image/png' };
@@ -37,7 +39,9 @@ const store = REDIS_URL
         body: JSON.stringify(args),
       });
       if (!res.ok) throw new Error(`redis ${res.status}`);
-      return (await res.json()).result;
+      const data = await res.json();
+      if (data.error) throw new Error('redis command failed');
+      return data.result;
     },
     async get(key) { const v = await this.cmd(['GET', `peace-shop:${key}`]); return v ? JSON.parse(v) : null; },
     async set(key, val) { await this.cmd(['SET', `peace-shop:${key}`, JSON.stringify(val)]); },
@@ -91,26 +95,69 @@ async function commit(state) {
 let lock = Promise.resolve();
 const locked = (fn) => { const run = lock.then(fn, fn); lock = run.catch(() => {}); return run; };
 
-// 일반 가족(비로그인)은 구매 요청 추가와 자기 요청 취소만 할 수 있다.
+// 일반 가족은 기존 상점 요청만 수정한다. 주식 요청은 /api/market에서 검증한다.
 function mergeFamily(cur, inc) {
-  const out = { ...cur, requests: [...cur.requests] };
+  const out = JSON.parse(JSON.stringify(cur));
   const byId = new Map(out.requests.map((r) => [r.id, r]));
+  const originalIds = new Set(byId.keys());
   for (const r of Array.isArray(inc.requests) ? inc.requests : []) {
     const old = byId.get(r?.id);
     if (old) {
-      if (old.status === 'pending' && r.status === 'cancelled') { old.status = 'cancelled'; old.doneTime = Date.now(); }
+      if (old.type !== 'stock' && old.memberId === r.memberId && old.status === 'pending' && r.status === 'cancelled') {
+        old.status = 'cancelled'; old.doneTime = Date.now();
+      }
       continue;
     }
     if (!r || r.status !== 'pending' || !cur.members.some((m) => m.id === r.memberId)) continue;
     const base = { id: String(r.id || uid()), memberId: r.memberId, time: Date.now(), status: 'pending' };
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(base.id)) continue;
+    let request;
     if (r.type === 'purchase') {
       const p = cur.products.find((x) => x.id === r.productId);
-      if (p) out.requests.push({ ...base, type: 'purchase', productId: p.id, productName: p.name, price: p.price });
+      const m = cur.members.find((m) => m.id === r.memberId);
+      if (p) {
+        if (!Number.isSafeInteger(p.price) || p.price < 0 || m.balance - Market.reservedPieces(out, m.id) < p.price) {
+          const e = new Error('승인 대기 중인 금액을 제외하면 피스가 부족해요.'); e.status = 422; throw e;
+        }
+        if (p.stock !== null && p.stock <= 0) { const e = new Error('품절된 상품이에요.'); e.status = 422; throw e; }
+        request = { ...base, type: 'purchase', productId: p.id, productName: p.name, price: p.price };
+      }
     } else if (r.type === 'bonus') {
-      out.requests.push({ ...base, type: 'bonus', title: String(r.title || '').slice(0, 40) });
+      request = { ...base, type: 'bonus', title: String(r.title || '').slice(0, 40) };
+    }
+    if (request) { out.requests.push(request); byId.set(request.id, request); }
+  }
+  return { state: out, added: out.requests.filter((r) => !originalIds.has(r.id)) };
+}
+
+// 예전 화면의 전체 저장이나 위조된 필드가 주식 장부를 지우지 못하게 한다.
+function mergeAdmin(cur, incoming) {
+  const out = clean(JSON.parse(JSON.stringify(incoming)));
+  const current = Market.ensure(JSON.parse(JSON.stringify(cur)));
+  const stockIds = new Set(current.requests.filter((r) => r.type === 'stock').map((r) => r.id));
+  for (const r of out.requests) {
+    const old = current.requests.find((p) => p.id === r.id && p.type === 'stock');
+    if (old && (r.type !== 'stock' || r.status !== old.status || r.price !== old.price || r.quantity !== old.quantity)) {
+      const e = new Error('주식 요청은 새로고침한 화면의 주식 승인 기능으로 처리해 주세요.'); e.status = 409; throw e;
     }
   }
-  return { state: out, added: out.requests.filter((r) => !byId.has(r.id)) };
+  const stockHistory = current.history.filter((r) => r.marketRequestId);
+  const historyIds = new Set(stockHistory.map((r) => r.id));
+  out.market = current.market;
+  out.requests = out.requests.filter((r) => r.type !== 'stock' && !stockIds.has(r.id))
+    .concat(current.requests.filter((r) => r.type === 'stock'));
+  out.history = out.history.filter((r) => !r.marketRequestId && !historyIds.has(r.id)).concat(stockHistory)
+    .sort((a, b) => a.time - b.time);
+  for (const m of current.members) {
+    if (out.members.some((n) => n.id === m.id)) continue;
+    if (out.market.holdings.some((p) => p.memberId === m.id && p.quantity > 0)
+      || out.requests.some((r) => r.type === 'stock' && r.memberId === m.id && r.status === 'pending')) {
+      const e = new Error('보유 주식과 주식 대기 요청을 정리한 뒤 가족을 삭제해 주세요.'); e.status = 422; throw e;
+    }
+  }
+  out.market.holdings = out.market.holdings.filter((p) => out.members.some((m) => m.id === p.memberId));
+  Market.validate(out);
+  return out;
 }
 
 // ---------- 알림 (Web Push) ----------
@@ -130,7 +177,9 @@ async function notify(added, state) {
   if (!subs.length) return;
   for (const r of added) {
     const name = state.members.find((m) => m.id === r.memberId)?.name || '가족';
-    const body = r.type === 'purchase' ? `${name}: ${r.productName} 구매 요청 (${r.price}피스)` : `${name}: 📚 ${r.title} 완주 신고`;
+    const body = r.type === 'stock'
+      ? `${name}: ${r.companyName} ${r.quantity}주 ${r.side === 'buy' ? '매수' : '매도'} 요청 (${r.price}피스)`
+      : r.type === 'purchase' ? `${name}: ${r.productName} 구매 요청 (${r.price}피스)` : `${name}: 📚 ${r.title} 완주 신고`;
     await pushAll({ title: '피스 상점 새 요청', body, url: '/#admin' });
   }
 }
@@ -164,7 +213,7 @@ async function api(req, res, url) {
     return locked(async () => {
       if (isAdmin) {
         if (rev !== db.rev) return send(res, 409, view());
-        await commit(clean(state));
+        await commit(db.state ? mergeAdmin(db.state, state) : Market.ensure(clean(state)));
       } else if (db.state) {
         const { state: next, added } = mergeFamily(db.state, state);
         await commit(next);
@@ -176,11 +225,42 @@ async function api(req, res, url) {
     });
   }
 
+  // 백업 복원과 전체 초기화만 명시적으로 주식 장부까지 교체할 수 있다.
+  if (url === '/api/state/replace' && req.method === 'POST') {
+    if (!isAdmin) return send(res, 401, { error: '엄마 로그인이 필요해요.' });
+    const { rev, state } = await body(req);
+    if (!validState(state)) return send(res, 400, { error: '올바른 상점 백업이 아니에요.' });
+    return locked(async () => {
+      if (rev !== db.rev) return send(res, 409, { error: '다른 기기에서 바뀌었어요. 다시 확인해 주세요.', ...view() });
+      const next = Market.ensure(clean(state));
+      Market.validate(next);
+      await commit(next);
+      return send(res, 200, view());
+    });
+  }
+
+  if (url === '/api/market' && req.method === 'POST') {
+    const payload = await body(req);
+    return locked(async () => {
+      if (!db.state) return send(res, 403, { error: '상점을 먼저 열어 주세요.' });
+      const before = new Set(db.state.requests.map((r) => r.id));
+      const next = Market.apply(db.state, payload.action, payload, { isAdmin, id: uid });
+      await commit(next);
+      const added = next.requests.filter((r) => r.type === 'stock' && !before.has(r.id));
+      if (added.length) notify(added, next).catch((e) => console.error('push 실패', e.message));
+      return send(res, 200, view());
+    });
+  }
+
   if (url === '/api/init' && req.method === 'POST') {
     const { state } = await body(req);
     if (!validState(state)) return send(res, 400, { error: 'bad state' });
     return locked(async () => {
-      if (!db.state) await commit(seed(clean(state)));
+      if (!db.state) {
+        const next = Market.ensure(seed(clean(state)));
+        Market.validate(next);
+        await commit(next);
+      }
       return send(res, 200, view());
     });
   }
@@ -225,8 +305,9 @@ async function api(req, res, url) {
       const from = st.members.find((m) => m.id === fromId);
       const to = st.members.find((m) => m.id === toId);
       if (!from || !to || from.id === to.id || !Number.isInteger(n) || n < 1) return send(res, 400, { error: 'bad transfer' });
-      const pending = st.requests.filter((r) => r.status === 'pending' && r.type === 'purchase' && r.memberId === from.id).reduce((sum, r) => sum + r.price, 0);
+      const pending = Market.reservedPieces(st, from.id);
       if (from.balance - pending < n) return send(res, 422, { error: 'not enough', available: from.balance - pending });
+      if (!Number.isSafeInteger(to.balance + n)) return send(res, 422, { error: '받는 사람의 잔액이 너무 커요.' });
       const now = Date.now();
       await commit({
         ...st,
@@ -264,6 +345,7 @@ async function api(req, res, url) {
 
 async function main() {
   db = (await store.get('state')) || db;
+  if (db.state) db.state = Market.ensure(db.state);
   auth = { ...auth, ...(await store.get('auth')) };
   if (!auth.secret) {
     auth.secret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -287,7 +369,9 @@ async function main() {
       fs.createReadStream(path.join(ROOT, file)).pipe(res);
     } catch (e) {
       console.error(e.message);
-      if (!res.headersSent) send(res, e.message.startsWith('redis') ? 502 : 400, { error: 'request failed' });
+      if (!res.headersSent) send(res, e.status || (e.message.startsWith('redis') ? 502 : 400), {
+        error: e.status ? e.message : '요청을 처리하지 못했어요. 다시 시도해 주세요.', ...view(),
+      });
     }
   }).listen(PORT, '0.0.0.0', () => {
     console.log(`피스 상점 서버가 켜졌어요 (저장소: ${store.label})`);

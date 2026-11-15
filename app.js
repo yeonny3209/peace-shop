@@ -9,6 +9,7 @@
   const WON_PER_PIECE = 1000;
   const MINUTES_PER_PIECE = 10;
   const BONUS = 20;
+  const Market = window.PeaceMarket;
   const SUBJECTS = {
     math: { label: '수학', rate: 2 },
     other: { label: '그 외 과목', rate: 3 },
@@ -63,7 +64,7 @@
     }
   }
 
-  let state = load();
+  let state = Market.ensure(load());
 
   // ---------- 서버 공유 저장소 (api/state가 있으면 서버 모드, 없으면 이 기기 저장 모드) ----------
   const TOKEN_KEY = 'peace-shop-token';
@@ -75,7 +76,7 @@
   function adopt(j) {
     const base = defaultState();
     server.rev = j.rev;
-    state = { ...base, ...j.state, settings: { ...base.settings, ...(j.state.settings || {}) } };
+    state = Market.ensure({ ...base, ...j.state, settings: { ...base.settings, ...(j.state.settings || {}) } });
   }
 
   function save() {
@@ -90,11 +91,15 @@
         });
         const j = await res.json().catch(() => null);
         if (res.ok && j) adopt(j);
-        else if (res.status === 409 && j) { adopt(j); toast('다른 기기에서 먼저 바뀌어 새로 불러왔어요. 다시 해 주세요'); }
+        else if (res.status === 409) {
+          if (j?.state) adopt(j); else await refreshState();
+          toast(j?.error || '다른 기기에서 먼저 바뀌어 새로 불러왔어요. 다시 해 주세요');
+        }
         else if (res.status === 401) { safeDel(sessionStorage, TOKEN_KEY); safeDel(sessionStorage, AUTH_KEY); toast('다시 로그인해 주세요'); }
-        else toast('서버에 저장하지 못했어요');
+        else { toast(j?.error || '서버에 저장하지 못했어요'); await refreshState(); }
       } catch {
-        toast('서버에 연결할 수 없어요');
+        toast('서버에 연결할 수 없어요. 저장 여부를 다시 확인해 주세요');
+        await refreshState();
       } finally {
         server.inflight--;
         if (!server.inflight) render();
@@ -147,7 +152,64 @@
       headers: { 'content-type': 'application/json', 'x-token': token() },
       body: JSON.stringify(payload),
     });
-    return { ok: res.ok, data: await res.json().catch(() => ({})) };
+    return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+  }
+
+  async function refreshState() {
+    try {
+      const res = await fetch('api/state', { cache: 'no-store' });
+      if (res.ok) { const j = await res.json(); if (j.state) adopt(j); }
+    } catch { /* 다음 동기화에서 다시 확인 */ }
+  }
+
+  // 기존 저장과 주식 처리를 직렬화해 같은 화면에서의 중복 사용도 막는다.
+  function marketAction(action, payload, message) {
+    const notice = () => {
+      if (action === 'decide' && payload.approve) {
+        const r = state.requests.find((request) => request.id === payload.requestId);
+        if (r?.status !== 'approved') return r?.status === 'expired' ? '가격이 바뀌어 요청이 만료됐어요. 가족이 새 가격으로 다시 요청해 주세요' : '이미 처리된 요청이에요';
+      }
+      return message;
+    };
+    return stateAction('api/market', { action, ...payload }, () => Market.apply(state, action, payload, { isAdmin: isAuthed() }), notice);
+  }
+
+  function replaceState(next, message) {
+    Market.validate(next);
+    return stateAction('api/state/replace', null, () => next, message);
+  }
+
+  function stateAction(path, payload, localChange, message) {
+    const task = async () => {
+      try {
+        if (server.on) {
+          const body = payload || { rev: server.rev, state: localChange() };
+          const result = await api(path, body);
+          if (!result.ok) {
+            if (result.status === 401) { safeDel(sessionStorage, TOKEN_KEY); safeDel(sessionStorage, AUTH_KEY); }
+            if (result.data.state) adopt(result.data);
+            else await refreshState();
+            throw new Error(result.status === 401 ? '엄마 화면에 다시 로그인해 주세요' : result.data.error || '처리하지 못했어요. 새 상태를 확인하고 다시 시도해 주세요');
+          }
+          adopt(result.data);
+        } else {
+          state = Market.ensure(localChange());
+          safeSet(localStorage, STORE_KEY, JSON.stringify(state));
+        }
+        if (message) toast(typeof message === 'function' ? message() : message);
+        return true;
+      } catch (error) {
+        toast(error.message || '연결을 확인하고 다시 시도해 주세요');
+        return false;
+      } finally {
+        server.inflight--;
+        render();
+      }
+    };
+    server.inflight++;
+    const result = chain.then(task, task);
+    chain = result.then(() => undefined);
+    return result;
   }
 
   // ---------- Helpers ----------
@@ -172,10 +234,14 @@
   }
 
   function pendingOf(memberId) {
-    return state.requests
-      .filter((r) => r.status === 'pending' && r.type === 'purchase' && r.memberId === memberId)
-      .reduce((sum, r) => sum + r.price, 0);
+    return Market.reservedPieces(state, memberId);
   }
+
+  const requestLabel = (r) => r.type === 'stock' ? `${r.companyName} · ${r.side === 'buy' ? '매수' : '매도'} ${fmt(r.quantity)}주` : r.type === 'purchase' ? `${r.productName} 구매` : `📚 완주 신고 · ${r.title}`;
+  const requestDelta = (r) => r.type === 'stock' ? (r.side === 'buy' ? -r.price : r.price) : r.type === 'purchase' ? -r.price : BONUS;
+  const requestStatus = (r) => ({ approved: '승인', rejected: '거절', cancelled: '취소', expired: '가격 변경 · 재요청 필요', pending: '승인 대기' }[r.status] || r.status);
+  const company = (id) => state.market.companies.find((c) => c.id === id);
+  const precise = (n) => Number(n).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 
   function record(memberId, delta, reason) {
     const m = member(memberId);
@@ -202,12 +268,20 @@
   function openModal(html, onSubmit) {
     modal.innerHTML = `<form method="dialog">${html}</form>`;
     const form = $('form', modal);
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       const submitter = e.submitter;
       if (submitter && submitter.value === 'cancel') return;
       e.preventDefault();
-      const ok = onSubmit(new FormData(form));
-      if (ok !== false) modal.close();
+      if (form.dataset.busy) return;
+      const fd = new FormData(form);
+      form.dataset.busy = '1';
+      const buttons = [...form.querySelectorAll('button')];
+      buttons.forEach((button) => { button.disabled = true; });
+      try {
+        const ok = await onSubmit(fd);
+        if (ok !== false && form.isConnected) modal.close();
+      } catch (error) { toast(error.message || '다시 시도해 주세요'); }
+      finally { delete form.dataset.busy; buttons.forEach((button) => { button.disabled = false; }); }
     });
     if (!modal.open) modal.showModal();
     const first = $('input, select', form);
@@ -221,19 +295,19 @@
       <div class="actions">
         <button class="btn" value="cancel" formnovalidate>취소</button>
         <button class="btn ${danger ? 'danger' : 'primary'}" value="ok">${h(confirmLabel)}</button>
-      </div>`, () => { onConfirm(); });
+      </div>`, () => onConfirm());
   }
 
   // ---------- Routing ----------
   const ui = { shopCat: 'all', adminTab: 'approve', historyFilter: 'all' };
-  const route = () => (location.hash.replace('#', '') === 'admin' ? 'admin' : 'shop');
+  const route = () => (['admin', 'market'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'shop');
   const isAuthed = () => safeGet(sessionStorage, AUTH_KEY) === '1';
 
   function render() {
     if (!ready) return;
     const r = route();
     document.querySelectorAll('.mainnav a').forEach((a) => a.classList.toggle('active', a.dataset.route === r));
-    app.innerHTML = r === 'admin' ? (isAuthed() ? renderAdmin() : renderLogin()) : renderShop();
+    app.innerHTML = r === 'admin' ? (isAuthed() ? renderAdmin() : renderLogin()) : r === 'market' ? renderMarket() : renderShop();
   }
 
   // ---------- Shop (가족용) ----------
@@ -294,9 +368,9 @@
         <section class="card">
           <div class="section-title"><h3>승인 대기 중인 요청</h3></div>
           ${myRequests.length ? `<ul class="list">${myRequests.map((r) => `<li>
-              <div><div>${r.type === 'purchase' ? h(r.productName) : `📚 완주 신고 · ${h(r.title)}`}</div>
+              <div><div>${h(requestLabel(r))}</div>
               <div class="meta">${fmtTime(r.time)}</div></div>
-              <div class="row">${r.type === 'purchase' ? `<span class="delta minus">-${fmt(r.price)}피스</span>` : `<span class="delta plus">+${BONUS}피스</span>`}
+              <div class="row">${deltaHtml(requestDelta(r))}
               <button class="btn sm" data-action="cancel-request" data-id="${r.id}">취소</button></div>
             </li>`).join('')}</ul>` : '<p class="muted" style="margin:0">대기 중인 요청이 없어요.</p>'}
         </section>
@@ -328,6 +402,151 @@
     </article>`;
   }
 
+  // ---------- 우리 가족 주식 ----------
+  function familyChips(mid) {
+    return `<div class="chips" aria-label="가족 선택">${state.members.map((m) => `<button class="chip ${m.id === mid ? 'active' : ''}" data-action="pick-member" data-id="${h(m.id)}">${h(m.name)}</button>`).join('')}</div>`;
+  }
+
+  function marketPrice(c) { return c.basePrice + Math.floor(Market.outstanding(state, c.id) / 5); }
+
+  function liquidationValue(c, quantity) {
+    const total = Market.outstanding(state, c.id);
+    let value = 0;
+    for (let k = 1; k <= quantity; k++) value += c.basePrice + Math.floor((total - k) / 5);
+    return value;
+  }
+
+  function marketActivity() {
+    const news = [
+      ...state.market.events.map((e) => ({ ...e, activityType: 'event' })),
+      ...state.market.trades.map((t) => ({ ...t, activityType: 'trade' })),
+    ].sort((a, b) => (b.time || b.createdAt || 0) - (a.time || a.createdAt || 0)).slice(0, 12);
+    if (!news.length) return '<p class="muted">아직 기록이 없어요. 회사 실적, 미션 결과와 승인된 거래가 여기에 남아요.</p>';
+    return `<ul class="list market-news">${news.map((entry) => {
+      const c = company(entry.companyId);
+      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '회사 등록'} · ${entry.title || c?.name || ''}`;
+      const delta = entry.delta;
+      const detail = entry.activityType === 'trade' ? `총 ${fmt(entry.total ?? entry.price ?? 0)}피스` : Number.isFinite(delta) ? `기준가 ${delta >= 0 ? '+' : ''}${fmt(delta)}피스` : '거래 시작';
+      const move = Number.isFinite(entry.priceBefore) && Number.isFinite(entry.priceAfter) ? `<div class="meta">다음 매수가 ${fmt(entry.priceBefore)} → ${fmt(entry.priceAfter)}피스</div>` : '';
+      return `<li><div><span class="meta">${h(c?.name || entry.companyName || '회사')} · ${fmtTime(entry.time || entry.createdAt)}</span><div>${h(label)}</div>${move}</div><span class="badge ${entry.activityType === 'event' ? 'gold' : ''}">${h(detail)}</span></li>`;
+    }).join('')}</ul>`;
+  }
+
+  function marketRules() {
+    return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
+      <p><strong>기준가 + 수요</strong>로 정해져요. 가족 전체가 보유한 주식이 5주 늘 때마다 다음 매수 가격에 1피스가 붙고, 팔면 그만큼 내려가요.</p>
+      <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 기준가도 바뀝니다. 여러 주를 한 번에 사고팔면 주마다 단가가 달라질 수 있어 총액을 먼저 보여드려요.</p>
+      <p>매수·매도는 엄마 승인 후 체결됩니다. 대기 중인 피스와 주식은 예약되며, 회사 가격 기준이나 보유량이 바뀌면 대기 요청은 만료되어 다시 요청해야 해요.</p>
+      <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
+    </div></details>`;
+  }
+
+  function renderMarket() {
+    if (!state.members.length) return `<div class="card empty"><span class="big">🌱</span><h2>우리 가족의 첫 주식</h2><p>엄마 화면에서 가족을 먼저 등록해 주세요.</p><a class="btn primary" href="#admin">엄마 화면으로</a></div>`;
+    const mid = currentMemberId();
+    const me = member(mid);
+    const reserved = pendingOf(mid);
+    const holdings = state.market.companies.map((c) => ({ c, held: Market.holding(state, mid, c.id) })).filter(({ held }) => held.quantity > 0);
+    const value = holdings.reduce((sum, { c, held }) => sum + liquidationValue(c, held.quantity), 0);
+    const cost = holdings.reduce((sum, { held }) => sum + held.costBasis, 0);
+    const requests = state.requests.filter((r) => r.type === 'stock' && r.memberId === mid).slice(-10).reverse();
+    const realized = state.market.trades.filter((t) => t.memberId === mid && t.side === 'sell').reduce((sum, t) => sum + (t.realizedProfit || 0), 0);
+    return `<div class="stack market-page">
+      <div class="spread"><div><p class="market-eyebrow">PEACE FAMILY MARKET</p><h1>우리 가족 주식</h1><p class="muted market-intro">공부로 모은 피스, 우리 가족 회사와 함께.</p></div><a class="btn" href="#shop">상점으로</a></div>
+      ${familyChips(mid)}
+      <section class="market-summary" aria-label="나의 주식 요약">
+        <div class="card market-cash"><span class="muted">${h(me.name)}의 사용 가능 피스</span><strong>${fmt(me.balance - reserved)} <small>피스</small></strong><span class="meta">전체 ${fmt(me.balance)} · 예약 ${fmt(reserved)}</span></div>
+        <div class="card"><span class="muted">보유 주식 매도 예상액</span><strong>${fmt(value)} <small>피스</small></strong><span class="meta">매입 원가 ${precise(cost)}피스</span></div>
+        <div class="card"><span class="muted">보유 주식 평가 손익</span><strong class="${value - cost >= 0 ? 'market-positive' : 'market-negative'}">${value - cost >= 0 ? '+' : ''}${precise(value - cost)} <small>피스</small></strong><span class="meta">매도해 확정한 손익 ${realized >= 0 ? '+' : ''}${precise(realized)}피스</span></div>
+      </section>
+      <section><div class="section-title"><h2>우리 가족 회사</h2><span class="badge green">엄마 승인 후 거래</span></div>
+      ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c, i) => {
+        const held = Market.holding(state, mid, c.id);
+        const available = Market.availableShares(state, mid, c.id);
+        const outstanding = Market.outstanding(state, c.id);
+        const price = marketPrice(c);
+        const sellPrice = outstanding > 0 ? c.basePrice + Math.floor((outstanding - 1) / 5) : null;
+        return `<article class="card company-card"><div class="spread"><span class="company-symbol" aria-hidden="true">${['🌱', '🍪', '🚀', '🏡'][i % 4]}</span><span class="badge">가족 보유 ${fmt(outstanding)}주</span></div><div><h3>${h(c.name)}</h3><p class="muted company-description">${h(c.description || '함께 키워 가는 우리 가족 회사')}</p></div>
+          <div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(price)} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} + 수요 ${fmt(price - c.basePrice)}${sellPrice !== null ? ` · 1주 매도가 ${fmt(sellPrice)}` : ''}</span></div>
+          <div class="company-owned"><span>내 보유 <strong>${fmt(held.quantity)}주</strong></span><span class="meta">매도 가능 ${fmt(available)}주</span></div>
+          <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>매수 요청</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>매도 요청</button></div>
+        </article>`;
+      }).join('')}</div>` : '<div class="card empty"><span class="big">🌱</span><h3>첫 회사를 기다리고 있어요</h3><p>엄마 화면의 ‘주식 관리’에서 회사 이름과 시작 기준가를 정해 주세요.</p><a class="btn primary" href="#admin" data-action="market-admin">회사 만들기</a></div>'}</section>
+      ${holdings.length ? `<section class="card"><div class="section-title"><h2>내 보유 주식</h2><span class="muted">현재 기준으로 전량 매도할 때의 예상액</span></div><div class="table-wrap"><table><thead><tr><th>회사</th><th class="right">보유</th><th class="right">평균 매입가</th><th class="right">매도 예상액</th><th class="right">평가 손익</th></tr></thead><tbody>${holdings.map(({ c, held }) => {
+        const estimate = liquidationValue(c, held.quantity);
+        const profit = estimate - held.costBasis;
+        return `<tr><td>${h(c.name)}</td><td class="right">${fmt(held.quantity)}주</td><td class="right">${precise(held.costBasis / held.quantity)}</td><td class="right">${fmt(estimate)}피스</td><td class="right ${profit >= 0 ? 'market-positive' : 'market-negative'}">${profit >= 0 ? '+' : ''}${precise(profit)}</td></tr>`;
+      }).join('')}</tbody></table></div><p class="meta">실제 체결 전까지 가격은 바뀔 수 있어요. 한 번에 최대 100주씩 요청할 수 있습니다.</p></section>` : ''}
+      <div class="grid-2"><section class="card"><div class="section-title"><h2>내 주식 요청</h2><span class="meta">최근 10건</span></div>${requests.length ? `<ul class="list market-requests">${requests.map((r) => `<li><div><strong>${h(requestLabel(r))}</strong><div class="meta">${fmtTime(r.time)} · 총 ${fmt(r.price)}피스</div><span class="badge ${r.status === 'approved' ? 'green' : r.status === 'expired' ? 'gold' : ''}">${h(requestStatus(r))}</span></div>${r.status === 'pending' ? `<button class="btn sm" data-action="cancel-request" data-id="${h(r.id)}">취소</button>` : ''}</li>`).join('')}</ul>` : '<p class="muted">아직 주식 요청이 없어요.</p>'}</section>
+      <section class="card"><div class="section-title"><h2>가격이 움직인 이야기</h2></div>${marketActivity()}</section></div>
+      ${marketRules()}
+    </div>`;
+  }
+
+  function adminMarket() {
+    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">매수·매도 요청은 ‘승인’ 탭에서 처리해 주세요. 결과를 반영하면 해당 회사의 대기 요청은 만료되고 새 가격으로 다시 요청해야 합니다.</p></section>
+      ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
+      <section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
+  }
+
+  function openTrade(companyId, side) {
+    const c = company(companyId);
+    const mid = currentMemberId();
+    const me = member(mid);
+    if (!c || !me) return false;
+    const max = side === 'sell' ? Math.min(100, Market.availableShares(state, mid, c.id)) : Math.min(100, 10000 - Market.outstanding(state, c.id));
+    if (max < 1) { toast(side === 'sell' ? '매도 가능한 주식이 없어요' : '이 회사의 발행 한도에 도달했어요'); return false; }
+    const requestId = uid();
+    let shownQuote = null;
+    let shownQuantity = 0;
+    openModal(`<h3>${h(c.name)} ${side === 'buy' ? '매수' : '매도'} 요청</h3><p class="muted">${h(me.name)} · 사용 가능 ${fmt(me.balance - pendingOf(mid))}피스 · 매도 가능 ${fmt(Market.availableShares(state, mid, c.id))}주</p>
+      <label class="field">주식 수량<input type="number" name="quantity" min="1" max="${max}" step="1" inputmode="numeric" value="1" required></label>
+      <div class="preview trade-preview" id="trade-preview" aria-live="polite"></div><p class="meta">엄마 승인 후 ${side === 'buy' ? '피스가 차감되고 주식을 받아요' : '주식이 줄고 피스를 받아요'}. 가격 기준이나 가족의 보유량이 바뀌면 요청은 만료됩니다.</p>
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">요청 보내기</button></div>`, async (fd) => {
+      const quantity = Number(fd.get('quantity'));
+      if (!shownQuote || quantity !== shownQuantity) { toast('수량과 거래 총액을 확인해 주세요'); return false; }
+      return marketAction('request', { id: requestId, memberId: mid, companyId: c.id, side, quantity, quoteVersion: shownQuote.quoteVersion, total: shownQuote.total }, '주식 요청을 보냈어요. 엄마 승인을 기다려 주세요');
+    });
+    const input = $('input[name="quantity"]', modal);
+    const update = () => {
+      const quantity = Number(input.value);
+      const output = $('#trade-preview');
+      try {
+        if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > max) throw new Error(`1~${max}주 사이의 정수를 입력해 주세요`);
+        shownQuote = Market.quote(state, c.id, side, quantity);
+        shownQuantity = quantity;
+        const insufficient = side === 'buy' && shownQuote.total > me.balance - pendingOf(mid);
+        output.innerHTML = `<span>${side === 'buy' ? '총 결제' : '총 받을'} 피스</span><strong>${fmt(shownQuote.total)} <small>피스</small></strong><div class="meta">첫 주 ${fmt(shownQuote.first)} · 마지막 주 ${fmt(shownQuote.last)} · 평균 ${precise(shownQuote.average)}피스</div>${insufficient ? '<p class="market-negative">사용 가능한 피스가 부족해요. 수량을 줄여 주세요.</p>' : ''}`;
+        if (insufficient) shownQuote = null;
+      } catch (error) { shownQuote = null; output.textContent = error.message; }
+    };
+    input.addEventListener('input', update);
+    update();
+    return false;
+  }
+
+  function openCompanyCreate() {
+    const id = uid();
+    openModal(`<h3>우리 가족 회사 만들기</h3><label class="field">회사 이름<input name="name" required maxlength="30" placeholder="예: 우리집 간식회사"></label><label class="field">어떤 회사인가요?<textarea name="description" maxlength="160" rows="2" placeholder="회사가 하는 일과 목표를 적어 주세요"></textarea></label><label class="field">시작 기준가 (1주)<input name="basePrice" type="number" min="1" max="10000" step="1" value="5" required></label><p class="meta">처음에는 보유 주식이 0주라 기준가가 매수가예요. 가족이 5주 보유할 때마다 다음 매수가에 1피스가 붙습니다.</p><div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">회사 만들기</button></div>`, (fd) => marketAction('company-create', { id, name: String(fd.get('name')).trim(), description: String(fd.get('description')).trim(), basePrice: Number(fd.get('basePrice')) }, '회사를 등록했어요'));
+    return false;
+  }
+
+  function openMarketEvent(companyId) {
+    const c = company(companyId);
+    if (!c) return false;
+    const id = uid();
+    openModal(`<h3>${h(c.name)} 결과 반영</h3><label class="field">어떤 결과인가요?<select name="kind"><option value="performance">회사 실적</option><option value="mission">가족 미션</option></select></label><label class="field">결과와 이유<input name="title" required maxlength="100" placeholder="예: 이번 주 독서 미션 달성"></label><label class="field">기준가 변화 (피스)<input type="number" name="delta" min="-100" max="100" step="1" value="1" required></label><div class="preview" id="event-preview" aria-live="polite"></div><p class="meta">이미 가진 주식의 가치도 바뀌며, 이 회사의 대기 요청은 만료됩니다. 결과와 이유는 가족 모두가 볼 수 있어요.</p><div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">결과 반영하기</button></div>`, (fd) => marketAction('event', { id, companyId, kind: fd.get('kind'), title: String(fd.get('title')).trim(), delta: Number(fd.get('delta')) }, '결과를 기록하고 기준가에 반영했어요'));
+    const input = $('input[name="delta"]', modal);
+    const update = () => {
+      const delta = Number(input.value);
+      const next = c.basePrice + delta;
+      $('#event-preview').textContent = Number.isInteger(delta) && delta !== 0 && Math.abs(delta) <= 100 && next >= 1 && next <= 10000 ? `기준가 ${fmt(c.basePrice)} → ${fmt(next)}피스 · 다음 1주 매수가 ${fmt(marketPrice(c))} → ${fmt(marketPrice(c) + delta)}피스` : '변화는 −100~100 사이의 0이 아닌 정수, 변경 후 기준가는 1~10,000피스여야 해요.';
+    };
+    input.addEventListener('input', update);
+    update();
+    return false;
+  }
+
   // ---------- Admin (엄마 전용) ----------
   function renderLogin() {
     return `<div class="card login">
@@ -348,12 +567,13 @@
       ['workbook', '📚 문제집 적립'],
       ['members', '👨‍👩‍👧 가족·잔액'],
       ['products', '🛒 상품 관리'],
+      ['market', '🌱 주식 관리'],
       ['history', '🧾 내역'],
       ['settings', '⚙️ 설정'],
     ];
     const body = {
       approve: adminApprove, workbook: adminWorkbook, members: adminMembers,
-      products: adminProducts, history: adminHistory, settings: adminSettings,
+      products: adminProducts, market: adminMarket, history: adminHistory, settings: adminSettings,
     }[ui.adminTab]();
     return `<div class="spread" style="margin-bottom:12px"><h2>엄마 화면</h2><button class="btn sm" data-action="logout">로그아웃</button></div>
       <div class="admin-tabs">${tabs.map(([id, label, n]) => `<button class="chip ${ui.adminTab === id ? 'active' : ''}" data-action="admin-tab" data-id="${id}">${label}${n ? `<span class="count">${n}</span>` : ''}</button>`).join('')}</div>
@@ -373,13 +593,14 @@
       const isBuy = r.type === 'purchase';
       const p = isBuy ? product(r.productId) : null;
       let warn = '';
-      if (isBuy && m && m.balance < r.price) warn = '<span class="badge red">잔액 부족</span>';
+      if (isBuy && m && m.balance - Market.reservedPieces(state, m.id, r.id) < r.price) warn = '<span class="badge red">잔액 부족</span>';
       if (isBuy && p && p.stock !== null && p.stock <= 0) warn += '<span class="badge red">품절</span>';
       if (isBuy && !p) warn += '<span class="badge red">삭제된 상품</span>';
+      if (r.type === 'stock' && company(r.companyId)?.quoteVersion !== r.quoteVersion) warn += '<span class="badge gold">가격 변경 · 재요청 필요</span>';
       return `<li>
-        <div><div><strong>${h(m?.name || '(삭제된 가족)')}</strong> · ${isBuy ? `${h(r.productName)} 구매` : `📚 완주 신고: ${h(r.title)}`} ${warn}</div>
+        <div><div><strong>${h(m?.name || '(삭제된 가족)')}</strong> · ${h(requestLabel(r))} ${warn}</div>
         <div class="meta">${fmtTime(r.time)} · 현재 잔액 ${fmt(m?.balance ?? 0)}피스</div></div>
-        <div class="row">${isBuy ? `<span class="delta minus">-${fmt(r.price)}</span>` : `<span class="delta plus">+${BONUS}</span>`}
+        <div class="row">${deltaHtml(requestDelta(r))}
           <button class="btn sm danger" data-action="reject" data-id="${r.id}">거절</button>
           <button class="btn sm primary" data-action="approve" data-id="${r.id}" ${warn ? 'disabled' : ''}>승인</button></div>
       </li>`;
@@ -391,9 +612,9 @@
       </section>
       <section class="card">
         <div class="section-title"><h3>최근 처리한 요청</h3></div>
-        ${done.length ? `<ul class="list">${done.map((r) => `<li><div><div>${h(member(r.memberId)?.name || '(삭제된 가족)')} · ${r.type === 'purchase' ? h(r.productName) : `완주 신고: ${h(r.title)}`}</div>
+        ${done.length ? `<ul class="list">${done.map((r) => `<li><div><div>${h(member(r.memberId)?.name || '(삭제된 가족)')} · ${h(requestLabel(r))}</div>
           <div class="meta">${fmtTime(r.doneTime || r.time)}</div></div>
-          <span class="badge ${r.status === 'approved' ? 'green' : r.status === 'rejected' ? 'red' : ''}">${{ approved: '승인', rejected: '거절', cancelled: '취소' }[r.status]}</span></li>`).join('')}</ul>`
+          <span class="badge ${r.status === 'approved' ? 'green' : r.status === 'rejected' ? 'red' : ''}">${h(requestStatus(r))}</span></li>`).join('')}</ul>`
           : '<p class="muted" style="margin:0">아직 없어요.</p>'}
       </section>
     </div>`;
@@ -590,7 +811,7 @@
       </section>
       <section class="card stack" style="gap:12px">
         <h3>전체 초기화</h3>
-        <p class="muted" style="margin:0;font-size:.85rem">가족, 상품, 내역, 비밀번호를 모두 지우고 처음 상태로 돌아갑니다.</p>
+        <p class="muted" style="margin:0;font-size:.85rem">가족 잔액, 상품, 회사, 보유 주식과 모든 내역을 지우고 처음 상태로 돌아갑니다.</p>
         <div><button class="btn danger" data-action="reset">모두 초기화</button></div>
       </section>
     </div>`;
@@ -622,6 +843,11 @@
 
   // ---------- Actions ----------
   const actions = {
+    'market-buy': (id) => openTrade(id, 'buy'),
+    'market-sell': (id) => openTrade(id, 'sell'),
+    'market-create': () => openCompanyCreate(),
+    'market-event': (id) => openMarketEvent(id),
+    'market-admin': () => { ui.adminTab = 'market'; location.hash = 'admin'; },
     'pick-member': (id) => safeSet(localStorage, MEMBER_KEY, id),
     'shop-cat': (id) => { ui.shopCat = id; },
     'admin-tab': (id) => { ui.adminTab = id; },
@@ -686,17 +912,20 @@
 
     'cancel-request': (id) => {
       const r = state.requests.find((x) => x.id === id);
+      if (r?.type === 'stock') return marketAction('cancel', { requestId: id, memberId: currentMemberId() }, '주식 요청을 취소했어요');
       if (r) { r.status = 'cancelled'; r.doneTime = Date.now(); save(); toast('요청을 취소했어요'); }
     },
 
     approve: (id) => {
       const r = state.requests.find((x) => x.id === id);
+      if (!r || r.status !== 'pending') return;
+      if (r.type === 'stock') return marketAction('decide', { requestId: id, approve: true }, '주식 거래를 승인했어요');
       const m = member(r.memberId);
       if (!m) return toast('가족 정보가 없어요');
       if (r.type === 'purchase') {
         const p = product(r.productId);
         if (!p) return toast('삭제된 상품이에요');
-        if (m.balance < r.price) return toast('잔액이 부족해서 승인할 수 없어요');
+        if (m.balance - Market.reservedPieces(state, m.id, r.id) < r.price) return toast('다른 요청의 예약분을 제외하면 잔액이 부족해요');
         if (p.stock !== null && p.stock <= 0) return toast('품절이라 승인할 수 없어요');
         if (p.stock !== null) p.stock -= 1;
         record(m.id, -r.price, `구매: ${r.productName}`);
@@ -709,6 +938,8 @@
 
     reject: (id) => {
       const r = state.requests.find((x) => x.id === id);
+      if (!r || r.status !== 'pending') return;
+      if (r.type === 'stock') return marketAction('decide', { requestId: id, approve: false }, '주식 요청을 거절했어요');
       r.status = 'rejected'; r.doneTime = Date.now();
       save(); toast('요청을 거절했어요');
     },
@@ -727,7 +958,7 @@
         <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">적용</button></div>`, (fd) => {
         const d = (parseInt(fd.get('amount'), 10) || 0) * parseInt(fd.get('sign'), 10);
         if (!d) { toast('1 이상의 숫자를 입력해 주세요'); return false; }
-        if (m.balance + d < 0) { toast('잔액이 0보다 작아질 수 없어요'); return false; }
+        if (m.balance + d < pendingOf(m.id)) { toast('승인 대기 중인 피스를 남겨 두어야 해요. 먼저 요청을 처리해 주세요'); return false; }
         record(m.id, d, `직접 조정: ${String(fd.get('reason')).trim()}`);
         save(); render(); toast('잔액을 조정했어요');
       });
@@ -745,10 +976,12 @@
 
     'delete-member': (id) => {
       const m = member(id);
+      if (state.market.holdings.some((held) => held.memberId === id && held.quantity > 0) || state.requests.some((r) => r.type === 'stock' && r.memberId === id && r.status === 'pending')) { toast('보유 주식을 매도하고 대기 중인 주식 요청을 처리한 뒤 삭제해 주세요'); return false; }
       confirmModal('가족 삭제', `<strong>${h(m.name)}</strong>을(를) 삭제할까요? 잔액 ${fmt(m.balance)}피스가 사라지고 대기 중인 요청도 취소돼요. 내역은 남아요.`, '삭제', () => {
         state.history.forEach((x) => { if (x.memberId === id) x.memberName = m.name; });
         state.requests.forEach((r) => { if (r.memberId === id && r.status === 'pending') { r.status = 'cancelled'; r.doneTime = Date.now(); } });
         state.members = state.members.filter((x) => x.id !== id);
+        state.market.holdings = state.market.holdings.filter((x) => x.memberId !== id);
         save(); render(); toast('삭제했어요');
       }, true);
       return false;
@@ -832,20 +1065,26 @@
     },
 
     reset: () => {
-      confirmModal('전체 초기화', '정말 모든 데이터를 지울까요? 되돌릴 수 없어요. 먼저 백업을 권해요.', '모두 지우기', () => {
-        state = defaultState(); save(); safeDel(sessionStorage, AUTH_KEY); render(); toast('초기화했어요');
+      confirmModal('전체 초기화', '정말 모든 데이터를 지울까요? 가족 잔액, 회사, 보유 주식과 모든 기록도 사라져요. 먼저 백업을 권해요.', '모두 지우기', async () => {
+        const success = await replaceState(Market.ensure(defaultState()), '초기화했어요');
+        if (success) { safeDel(sessionStorage, AUTH_KEY); render(); }
+        return success;
       }, true);
       return false;
     },
   };
 
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-action]');
     if (!el || el.disabled) return;
     const fn = actions[el.dataset.action];
     if (!fn) return;
     e.preventDefault();
-    if (fn(el.dataset.id, el) !== false) render();
+    if (server.inflight) { toast('저장 중이에요. 잠시 후 다시 해 주세요'); return; }
+    el.disabled = true;
+    try { if (await fn(el.dataset.id, el) !== false) render(); }
+    catch (error) { toast(error.message || '처리하지 못했어요'); }
+    finally { el.disabled = false; }
   });
 
   // ---------- Forms ----------
@@ -853,6 +1092,7 @@
     const form = e.target;
     if (form.closest('dialog')) return;
     e.preventDefault();
+    if (server.inflight) { toast('저장 중이에요. 잠시 후 다시 해 주세요'); return; }
     const fd = new FormData(form);
 
     switch (form.id) {
@@ -938,13 +1178,14 @@
     if (e.target.closest('#workbook-form')) e.target.dispatchEvent(new Event('input', { bubbles: true }));
     if (e.target.id === 'import-file' && e.target.files[0]) {
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         try {
           const data = JSON.parse(reader.result);
           if (!Array.isArray(data.members) || !Array.isArray(data.products)) throw new Error('형식 오류');
           const base = defaultState();
-          state = { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
-          save(); render(); toast('백업을 불러왔어요');
+          const next = Market.ensure({ ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } });
+          Market.validate(next);
+          confirmModal('백업 불러오기', '현재 가족 잔액, 회사와 보유 주식을 이 백업의 내용으로 바꿉니다. 계속할까요?', '백업 불러오기', () => replaceState(next, '백업을 불러왔어요'));
         } catch {
           toast('백업 파일을 읽을 수 없어요');
         }
@@ -954,7 +1195,7 @@
   });
 
   // 다른 탭에서 바뀐 데이터 반영
-  window.addEventListener('storage', (e) => { if (!server.on && e.key === STORE_KEY) { state = load(); render(); } });
+  window.addEventListener('storage', (e) => { if (!server.on && e.key === STORE_KEY) { state = Market.ensure(load()); render(); } });
   window.addEventListener('hashchange', render);
 
   async function init() {
