@@ -209,7 +209,7 @@
       const ok = onSubmit(new FormData(form));
       if (ok !== false) modal.close();
     });
-    modal.showModal();
+    if (!modal.open) modal.showModal();
     const first = $('input, select', form);
     if (first) first.focus();
   }
@@ -274,7 +274,10 @@
           <div class="amount num">${coin(false)} ${fmt(me.balance)} <small>피스</small></div>
           <div class="sub">게임 ${fmt(me.balance * MINUTES_PER_PIECE)}분 · ${fmt(me.balance * WON_PER_PIECE)}원 어치${pending ? ` · 승인 대기 ${fmt(pending)}피스 (사용 가능 ${fmt(available)}피스)` : ''}</div>
         </div>
-        <button class="btn" data-action="bonus-request">📚 문제집 완주 신고 (+${BONUS})</button>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn" data-action="bonus-request">📚 문제집 완주 신고 (+${BONUS})</button>
+          ${state.settings.transfer !== false && state.members.length > 1 ? '<button class="btn" data-action="transfer">💌 피스 보내기</button>' : ''}
+        </div>
       </section>
 
       <section>
@@ -562,6 +565,14 @@
         <p class="muted" style="margin:0;font-size:.8rem">가족용 잠금 장치예요. 서버 없이 이 페이지 안에서만 확인하므로 은행 수준 보안은 아니에요.</p>
       </section>
       <section class="card stack" style="gap:12px">
+        <h3>피스 양도 (가족끼리 보내기)</h3>
+        <p class="muted" style="margin:0;font-size:.85rem">허용하면 가족이 엄마 승인 없이 서로 피스를 보낼 수 있어요. 모든 양도는 내역에 남고, 알림을 켰다면 엄마에게도 알림이 가요.</p>
+        <div class="chips">
+          <button class="chip ${state.settings.transfer !== false ? 'active' : ''}" data-action="transfer-toggle" data-id="on">허용</button>
+          <button class="chip ${state.settings.transfer === false ? 'active' : ''}" data-action="transfer-toggle" data-id="off">막기</button>
+        </div>
+      </section>
+      <section class="card stack" style="gap:12px">
         <h3>남는 장수 처리</h3>
         <p class="muted" style="margin:0;font-size:.85rem">수학 1장, 그 외 1~2장처럼 피스로 바뀌지 않고 남는 장수를 어떻게 할까요?</p>
         <div class="chips">
@@ -583,6 +594,30 @@
         <div><button class="btn danger" data-action="reset">모두 초기화</button></div>
       </section>
     </div>`;
+  }
+
+  async function doTransfer(fromId, toId, n) {
+    const from = member(fromId);
+    const to = member(toId);
+    if (server.on) {
+      try {
+        const r = await api('api/transfer', { fromId, toId, amount: n });
+        if (r.ok) { adopt(r.data); toast(`${to.name}에게 ${fmt(n)}피스를 보냈어요 💌`); }
+        else toast({ 'not enough': '피스가 모자라요', disabled: '지금은 양도가 막혀 있어요' }[r.data.error] || '보내지 못했어요');
+      } catch {
+        toast('서버에 연결할 수 없어요');
+      }
+    } else {
+      if (state.settings.transfer === false) toast('지금은 양도가 막혀 있어요');
+      else if (from.balance - pendingOf(fromId) < n) toast('피스가 모자라요');
+      else {
+        record(fromId, -n, `양도: ${to.name}에게 보냄`);
+        record(toId, n, `양도: ${from.name}에게서 받음`);
+        save();
+        toast(`${to.name}에게 ${fmt(n)}피스를 보냈어요 💌`);
+      }
+    }
+    render();
   }
 
   // ---------- Actions ----------
@@ -617,6 +652,36 @@
         save(); render(); toast('완주 신고를 보냈어요!');
       });
       return false;
+    },
+
+    transfer: () => {
+      const mid = currentMemberId();
+      const me = member(mid);
+      const others = state.members.filter((m) => m.id !== mid);
+      const avail = me.balance - pendingOf(mid);
+      if (!others.length) { toast('보낼 가족이 없어요'); return false; }
+      if (avail < 1) { toast('보낼 수 있는 피스가 없어요'); return false; }
+      openModal(`
+        <h3>💌 피스 보내기</h3>
+        <p class="muted" style="margin:0;font-size:.88rem">${h(me.name)}이(가) 보낼 수 있는 피스: <strong>${fmt(avail)}</strong>피스. 엄마 승인 없이 바로 전달돼요.</p>
+        <div class="form-grid">
+          <label class="field">받는 사람<select name="to">${others.map((m) => `<option value="${m.id}">${h(m.name)}</option>`).join('')}</select></label>
+          <label class="field">보낼 피스<input type="number" name="amount" min="1" max="${avail}" step="1" inputmode="numeric" placeholder="예: 5" required></label>
+        </div>
+        <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">다음</button></div>`, (fd) => {
+        const to = member(fd.get('to'));
+        const n = parseInt(fd.get('amount'), 10);
+        if (!to || !(n >= 1) || n > avail) { toast(`1~${fmt(avail)}피스 사이로 입력해 주세요`); return false; }
+        confirmModal('정말 보낼까요?', `<strong>${h(me.name)}</strong> → <strong>${h(to.name)}</strong><br><strong>${fmt(n)}피스</strong>(${fmt(n * MINUTES_PER_PIECE)}분 · ${fmt(n * WON_PER_PIECE)}원 어치)를 바로 보내요.<br>보낸 뒤에는 <u>되돌릴 수 없어요</u>. 엄마가 내역에서 볼 수 있어요.`, '보내기', () => doTransfer(mid, to.id, n));
+        return false;
+      });
+      return false;
+    },
+
+    'transfer-toggle': (id) => {
+      state.settings.transfer = id === 'on';
+      save();
+      toast(id === 'on' ? '피스 양도를 허용해요' : '피스 양도를 막았어요');
     },
 
     'cancel-request': (id) => {

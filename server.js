@@ -214,6 +214,32 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true, devices: subs.length });
   }
 
+  // 가족끼리 피스 양도: 엄마 승인 없이 바로 처리. 잔액 확인과 이체를 한 번에(잠금 안에서) 한다.
+  if (url === '/api/transfer' && req.method === 'POST') {
+    const { fromId, toId, amount } = await body(req);
+    const n = Number(amount);
+    return locked(async () => {
+      const st = db.state;
+      if (!st) return send(res, 403, { error: 'not initialised' });
+      if (st.settings?.transfer === false) return send(res, 403, { error: 'disabled' });
+      const from = st.members.find((m) => m.id === fromId);
+      const to = st.members.find((m) => m.id === toId);
+      if (!from || !to || from.id === to.id || !Number.isInteger(n) || n < 1) return send(res, 400, { error: 'bad transfer' });
+      const pending = st.requests.filter((r) => r.status === 'pending' && r.type === 'purchase' && r.memberId === from.id).reduce((sum, r) => sum + r.price, 0);
+      if (from.balance - pending < n) return send(res, 422, { error: 'not enough', available: from.balance - pending });
+      const now = Date.now();
+      await commit({
+        ...st,
+        members: st.members.map((m) => (m.id === from.id ? { ...m, balance: m.balance - n } : m.id === to.id ? { ...m, balance: m.balance + n } : m)),
+        history: [...st.history,
+          { id: uid(), time: now, memberId: from.id, delta: -n, reason: `양도: ${to.name}에게 보냄`, balanceAfter: from.balance - n },
+          { id: uid(), time: now, memberId: to.id, delta: n, reason: `양도: ${from.name}에게서 받음`, balanceAfter: to.balance + n }],
+      });
+      pushAll({ title: '피스 양도', body: `${from.name} → ${to.name}: ${n}피스를 보냈어요`, url: '/#admin' }).catch(() => {});
+      return send(res, 200, view());
+    });
+  }
+
   if (url === '/api/login' && req.method === 'POST') {
     const { pw } = await body(req);
     if (!passwordOk(pw)) return send(res, 403, { error: 'wrong password' });
