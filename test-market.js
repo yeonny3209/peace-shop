@@ -52,6 +52,41 @@ test('v1 migration preserves existing shop data and is idempotent', () => {
   assert.equal(Market.validate(state), true);
 });
 
+test('linked launch adds chocolate once and formation includes every company', () => {
+  const state = legacyState();
+  state.market = { version: 1, holdings: [], events: [], trades: [], companies: [
+    { id: 'snacks', name: '바삭과자', basePrice: 2, quoteVersion: 1, createdAt: 1 },
+    { id: 'bread', name: '우리집 베이커리', basePrice: 3, quoteVersion: 1, createdAt: 1 },
+    { id: 'other', name: '기타', basePrice: 3, quoteVersion: 1, createdAt: 1 },
+  ] };
+  const upgraded = Market.upgradeLinks(state, 2);
+  assert.equal(Market.upgradeLinks(upgraded, 3), upgraded);
+  assert.deepEqual(Market.linkedCompanies(upgraded).map((c) => c.id), ['snacks', 'linked-chocolate', 'bread', 'other']);
+  assert.deepEqual(Market.neighbors(upgraded, 'linked-chocolate').map((c) => c.id), ['snacks', 'bread']);
+  assert.deepEqual(upgraded.members, state.members);
+  assert.equal(Market.validate(upgraded), true);
+  let next = upgraded;
+  const trade = (id, companyId, side, quantity) => {
+    const quote = Market.quote(next, companyId, side, quantity);
+    next = Market.apply(next, side, { id, companyId, side, quantity, memberId: 'm1', quoteVersion: quote.quoteVersion, total: quote.total });
+  };
+  trade('link-buy-1', 'snacks', 'buy', 3);
+  assert.equal(Market.nextPrice(next, 'linked-chocolate'), 4);
+  assert.equal(Market.nextPrice(next, 'bread'), 3);
+  trade('link-buy-2', 'linked-chocolate', 'buy', 2);
+  assert.equal(Market.nextPrice(next, 'bread'), 4);
+  assert.ok(next.market.events.some((e) => e.kind === 'linked' && e.companyId === 'bread'));
+  trade('link-sell-1', 'snacks', 'sell', 3);
+  trade('link-sell-2', 'linked-chocolate', 'sell', 2);
+  assert.equal(next.members[0].balance, state.members[0].balance);
+  assert.equal(Market.nextPrice(next, 'bread'), 3);
+  const moved = Market.apply(next, 'event', { id: 'snack-result', companyId: 'snacks', kind: 'mission', title: '미션 달성', delta: 6 }, { isAdmin: true });
+  assert.equal(Market.nextPrice(moved, 'snacks'), 8);
+  assert.equal(Market.nextPrice(moved, 'linked-chocolate'), 6);
+  assert.equal(Market.nextPrice(moved, 'bread'), 5);
+  assert.equal(Market.priceHistory(moved, 'bread').at(-1).price, 5);
+});
+
 test('company creation, price events, and approval require admin authority', () => {
   assert.throws(() => Market.apply(legacyState(), 'company-create', { id: 'company', name: '회사', basePrice: 5 }), errorStatus(401));
   const state = companyState();

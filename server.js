@@ -381,7 +381,11 @@ async function api(req, res, url) {
 
 async function main() {
   db = (await store.get('state')) || db;
-  if (db.state) db.state = Market.ensure(db.state);
+  if (db.state) {
+    db.state = Market.ensure(db.state);
+    const linked = Market.upgradeLinks(db.state);
+    if (linked !== db.state) await commit(linked);
+  }
   auth = { ...auth, ...(await store.get('auth')) };
   if (!auth.secret) {
     auth.secret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');

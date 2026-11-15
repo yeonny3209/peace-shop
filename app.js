@@ -408,7 +408,7 @@
     return `<div class="chips" aria-label="가족 선택">${state.members.map((m) => `<button class="chip ${m.id === mid ? 'active' : ''}" data-action="pick-member" data-id="${h(m.id)}">${h(m.name)}</button>`).join('')}</div>`;
   }
 
-  function marketPrice(c) { return c.basePrice + Math.floor(Market.outstanding(state, c.id) / 5); }
+  function marketPrice(c) { return Market.nextPrice(state, c.id); }
 
   const chartPieces = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 });
   const priceLabels = (won) => `<strong>${fmt(won)}원</strong><span>${chartPieces.format(Math.trunc(won / 10) / 100)}피스</span>`;
@@ -479,8 +479,9 @@
 
   function liquidationValue(c, quantity) {
     const total = Market.outstanding(state, c.id);
+    const at = Market.priceCurve(state, c.id);
     let value = 0;
-    for (let k = 1; k <= quantity; k++) value += c.basePrice + Math.floor((total - k) / 5);
+    for (let k = 1; k <= quantity; k++) value += at(total - k);
     return value;
   }
 
@@ -492,9 +493,9 @@
     if (!news.length) return '<p class="muted">아직 기록이 없어요. 회사 실적, 미션 결과와 승인된 거래가 여기에 남아요.</p>';
     return `<ul class="list market-news">${news.map((entry) => {
       const c = company(entry.companyId);
-      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '회사 등록'} · ${entry.title || c?.name || ''}`;
+      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '연동'} · ${entry.title || c?.name || ''}`;
       const delta = entry.delta;
-      const detail = entry.activityType === 'trade' ? `총 ${fmt(entry.total ?? entry.price ?? 0)}피스` : Number.isFinite(delta) ? `기준가 ${delta >= 0 ? '+' : ''}${fmt(delta)}피스` : '거래 시작';
+      const detail = entry.activityType === 'trade' ? `총 ${fmt(entry.total ?? entry.price ?? 0)}피스` : Number.isFinite(delta) ? `기준가 ${delta >= 0 ? '+' : ''}${fmt(delta)}피스` : '연동 변화';
       const move = Number.isFinite(entry.priceBefore) && Number.isFinite(entry.priceAfter) ? `<div class="meta">다음 매수가 ${fmt(entry.priceBefore)} → ${fmt(entry.priceAfter)}피스</div>` : '';
       return `<li><div><span class="meta">${h(c?.name || entry.companyName || '회사')} · ${fmtTime(entry.time || entry.createdAt)}</span><div>${h(label)}</div>${move}</div><span class="badge ${entry.activityType === 'event' ? 'gold' : ''}">${h(detail)}</span></li>`;
     }).join('')}</ul>`;
@@ -502,8 +503,8 @@
 
   function marketRules() {
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
-      <p><strong>기준가 + 수요</strong>로 정해져요. 가족 전체가 보유한 주식이 5주 늘 때마다 다음 매수 가격에 1피스가 붙고, 팔면 그만큼 내려가요.</p>
-      <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 기준가도 바뀝니다. 여러 주를 한 번에 사고팔면 주마다 단가가 달라질 수 있어 총액을 먼저 보여드려요.</p>
+      <p>한 종목의 주식을 사고팔면 그 종목의 보유량, 이웃 종목과 합친 보유량, 시장 전체 보유량이 함께 바뀌어요. 종목 자체는 5주 구간, 연결된 두 종목은 합계 3주 구간, 시장 전체는 합계 5주 구간을 넘을 때마다 1피스씩 움직여요.</p>
+      <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 연결을 따라 다른 종목의 기준가에도 영향이 퍼져요. 멀리 있는 종목일수록 영향이 작아져요.</p>
       <p>매수와 매도는 내 거래 PIN을 입력하면 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
@@ -528,15 +529,18 @@
         <div class="card"><span class="muted">보유 주식 평가 손익</span><strong class="${value - cost >= 0 ? 'market-positive' : 'market-negative'}">${value - cost >= 0 ? '+' : ''}${precise(value - cost)} <small>피스</small></strong><span class="meta">매도해 확정한 손익 ${realized >= 0 ? '+' : ''}${precise(realized)}피스</span></div>
       </section>
       ${marketChart()}
+      ${state.market.companies.length > 1 ? `<section class="card"><h2>종목 연결 지도</h2><p class="meta muted">서로 가까운 종목이 수요를 공유하고, 마지막과 첫 종목도 연결돼요.</p><ol class="stock-links">${Market.linkedCompanies(state).map((c) => `<li>${h(c.name)}</li>`).join('')}</ol></section>` : ''}
       <section><div class="section-title"><h2>우리 가족 회사</h2></div>
-      ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c, i) => {
+      ${state.market.companies.length ? `<div class="market-companies">${Market.linkedCompanies(state).map((c, i) => {
         const held = Market.holding(state, mid, c.id);
         const available = Market.availableShares(state, mid, c.id);
         const outstanding = Market.outstanding(state, c.id);
         const price = marketPrice(c);
-        const sellPrice = outstanding > 0 ? c.basePrice + Math.floor((outstanding - 1) / 5) : null;
+        const sellPrice = outstanding > 0 ? Market.priceAt(state, c.id, outstanding - 1) : null;
+        const links = Market.neighbors(state, c.id).map((linked) => h(linked.name)).join(' · ');
         return `<article class="card company-card"><div class="spread"><span class="company-symbol" aria-hidden="true">${['🌱', '🍪', '🚀', '🏡'][i % 4]}</span><span class="badge">가족 보유 ${fmt(outstanding)}주</span></div><div><h3>${h(c.name)}</h3><p class="muted company-description">${h(c.description || '함께 키워 가는 우리 가족 회사')}</p></div>
           <div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(price)} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} + 수요 ${fmt(price - c.basePrice)}${sellPrice !== null ? ` · 1주 매도가 ${fmt(sellPrice)}` : ''}</span></div>
+          ${links ? `<div class="meta muted">연결 종목 ${links}</div>` : ''}
           <div class="company-owned"><span>내 보유 <strong>${fmt(held.quantity)}주</strong></span><span class="meta">매도 가능 ${fmt(available)}주</span></div>
           <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>바로 매수</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>바로 매도</button></div>
         </article>`;
@@ -613,7 +617,7 @@
 
   function openCompanyCreate() {
     const id = uid();
-    openModal(`<h3>우리 가족 회사 만들기</h3><label class="field">회사 이름<input name="name" required maxlength="30" placeholder="예: 우리집 간식회사"></label><label class="field">어떤 회사인가요?<textarea name="description" maxlength="160" rows="2" placeholder="회사가 하는 일과 목표를 적어 주세요"></textarea></label><label class="field">시작 기준가 (1주)<input name="basePrice" type="number" min="1" max="10000" step="1" value="5" required></label><p class="meta">처음에는 보유 주식이 0주라 기준가가 매수가예요. 가족이 5주 보유할 때마다 다음 매수가에 1피스가 붙습니다.</p><div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">회사 만들기</button></div>`, (fd) => marketAction('company-create', { id, name: String(fd.get('name')).trim(), description: String(fd.get('description')).trim(), basePrice: Number(fd.get('basePrice')) }, '회사를 등록했어요'));
+    openModal(`<h3>우리 가족 회사 만들기</h3><label class="field">회사 이름<input name="name" required maxlength="30" placeholder="예: 우리집 간식회사"></label><label class="field">어떤 회사인가요?<textarea name="description" maxlength="160" rows="2" placeholder="회사가 하는 일과 목표를 적어 주세요"></textarea></label><label class="field">시작 기준가 (1주)<input name="basePrice" type="number" min="1" max="10000" step="1" value="5" required></label><p class="meta">새 종목은 등록 즉시 기존 종목과 연결돼요. 실제 매수가에는 연결된 종목과 시장 전체 수요가 반영됩니다.</p><div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">회사 만들기</button></div>`, (fd) => marketAction('company-create', { id, name: String(fd.get('name')).trim(), description: String(fd.get('description')).trim(), basePrice: Number(fd.get('basePrice')) }, '회사를 등록했어요'));
     return false;
   }
 
@@ -621,7 +625,7 @@
     const c = company(companyId);
     if (!c) return false;
     const id = uid();
-    openModal(`<h3>${h(c.name)} 결과 반영</h3><label class="field">어떤 결과인가요?<select name="kind"><option value="performance">회사 실적</option><option value="mission">가족 미션</option></select></label><label class="field">결과와 이유<input name="title" required maxlength="100" placeholder="예: 이번 주 독서 미션 달성"></label><label class="field">기준가 변화 (피스)<input type="number" name="delta" min="-100" max="100" step="1" value="1" required></label><div class="preview" id="event-preview" aria-live="polite"></div><p class="meta">이미 가진 주식의 가치도 바뀌며, 이 회사의 대기 요청은 만료됩니다. 결과와 이유는 가족 모두가 볼 수 있어요.</p><div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">결과 반영하기</button></div>`, (fd) => marketAction('event', { id, companyId, kind: fd.get('kind'), title: String(fd.get('title')).trim(), delta: Number(fd.get('delta')) }, '결과를 기록하고 기준가에 반영했어요'));
+    openModal(`<h3>${h(c.name)} 결과 반영</h3><label class="field">어떤 결과인가요?<select name="kind"><option value="performance">회사 실적</option><option value="mission">가족 미션</option></select></label><label class="field">결과와 이유<input name="title" required maxlength="100" placeholder="예: 이번 주 독서 미션 달성"></label><label class="field">기준가 변화 (피스)<input type="number" name="delta" min="-100" max="100" step="1" value="1" required></label><div class="preview" id="event-preview" aria-live="polite"></div><p class="meta">이 결과는 연결된 종목에도 영향을 줘요. 가격이 바뀌면 대기 요청은 만료됩니다.</p><div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">결과 반영하기</button></div>`, (fd) => marketAction('event', { id, companyId, kind: fd.get('kind'), title: String(fd.get('title')).trim(), delta: Number(fd.get('delta')) }, '결과를 기록하고 기준가에 반영했어요'));
     const input = $('input[name="delta"]', modal);
     const update = () => {
       const delta = Number(input.value);

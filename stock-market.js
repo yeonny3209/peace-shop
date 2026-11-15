@@ -24,6 +24,67 @@
   function outstanding(state, companyId) {
     return market(state).holdings.filter((p) => p.companyId === companyId).reduce((n, p) => n + p.quantity, 0);
   }
+  const linkOrder = ['바삭과자', '달콤초콜릿', '우리집베이커리', '달콤음료', '한밤라면', '초록텃밭', '반짝문구', '피스게임즈'];
+  const nameKey = (name) => String(name).replace(/\s/g, '');
+  function linkedCompanies(state) {
+    const companies = market(state).companies;
+    const byName = new Map(companies.map((c) => [nameKey(c.name), c]));
+    const ordered = linkOrder.map((name) => byName.get(name)).filter(Boolean);
+    return [...ordered, ...companies.filter((c) => !ordered.includes(c))];
+  }
+  function neighbors(state, companyId) {
+    const companies = linkedCompanies(state);
+    const index = companies.findIndex((c) => c.id === companyId);
+    if (index === -1 || companies.length < 2) return [];
+    const left = companies[(index + companies.length - 1) % companies.length];
+    const right = companies[(index + 1) % companies.length];
+    return left === right ? [left] : [left, right];
+  }
+  function priceCurve(state, companyId) {
+    const c = company(state, companyId);
+    const companies = market(state).companies;
+    if (companies.length < 2) return (shares) => c.basePrice + Math.floor(shares / 5);
+    const nearby = neighbors(state, companyId).map((other) => outstanding(state, other.id));
+    const marketShares = companies.reduce((sum, other) => sum + (other.id === companyId ? 0 : outstanding(state, other.id)), 0);
+    // Each shared band uses the same total on both ends of a trade. Reversing a set of trades cannot mint pieces.
+    return (shares) => c.basePrice + Math.floor(shares / 5) + Math.floor((marketShares + shares) / 5)
+      + nearby.reduce((sum, count) => sum + Math.floor((count + shares) / 3), 0);
+  }
+  const priceAt = (state, companyId, shares) => priceCurve(state, companyId)(shares);
+  const nextPrice = (state, companyId) => priceAt(state, companyId, outstanding(state, companyId));
+
+  function reprice(state, origin, before, now) {
+    for (const c of market(state).companies) {
+      if (c.id === origin.id) continue;
+      c.quoteVersion++;
+      expire(state, c.id, now);
+      const after = nextPrice(state, c.id);
+      if (after === before.get(c.id)) continue;
+      const events = market(state).events;
+      events.push({ id: `linked-${now}-${events.length}`, companyId: c.id, companyName: c.name, kind: 'linked',
+        title: `${origin.name}의 변화`, priceBefore: before.get(c.id), priceAfter: after, quoteVersion: c.quoteVersion, time: now });
+    }
+  }
+  const marketPrices = (state) => new Map(market(state).companies.map((c) => [c.id, nextPrice(state, c.id)]));
+
+  function upgradeLinks(input, now = Date.now()) {
+    if (!input || !market(input).companies.length || market(input).linkedLaunch) return input;
+    const state = clone(input);
+    const mk = state.market;
+    const names = new Set(mk.companies.map((c) => nameKey(c.name)));
+    if (names.has('바삭과자') && names.has('우리집베이커리') && !names.has('달콤초콜릿') && !company(state, 'linked-chocolate')) {
+      mk.companies.push({ id: 'linked-chocolate', name: '달콤초콜릿', description: '과자와 빵에 어울리는 초콜릿을 만드는 가족 회사예요.', basePrice: 3, quoteVersion: 1, createdAt: now });
+    }
+    for (const c of mk.companies) {
+      const before = c.basePrice + Math.floor(outstanding(state, c.id) / 5);
+      const after = nextPrice(state, c.id);
+      c.quoteVersion++;
+      if (before !== after) mk.events.push({ id: `link-launch-${mk.events.length}`, companyId: c.id, kind: 'linked', title: '종목 연동 시작', priceBefore: before, priceAfter: after, quoteVersion: c.quoteVersion, time: now });
+      expire(state, c.id, now);
+    }
+    mk.linkedLaunch = true;
+    return state;
+  }
   function holding(state, memberId, companyId) {
     return market(state).holdings.find((p) => p.memberId === memberId && p.companyId === companyId)
       || { memberId, companyId, quantity: 0, costBasis: 0 };
@@ -49,11 +110,12 @@
     if (side === 'buy' && n + quantity > MAX_SHARES) fail('이 회사는 총 10,000주까지만 보유할 수 있어요.', 422);
     if (side === 'sell' && quantity > n) fail('매도할 수 있는 주식이 부족해요.', 422);
     const prices = [];
-    for (let i = 0; i < quantity; i++) prices.push(c.basePrice + Math.floor((side === 'buy' ? n + i : n - i - 1) / 5));
+    const at = priceCurve(state, c.id);
+    for (let i = 0; i < quantity; i++) prices.push(at(side === 'buy' ? n + i : n - i - 1));
     return {
       total: prices.reduce((sum, p) => sum + p, 0), average: prices.reduce((sum, p) => sum + p, 0) / quantity,
       first: prices[0], last: prices[prices.length - 1], quoteVersion: c.quoteVersion,
-      nextPrice: c.basePrice + Math.floor((side === 'buy' ? n + quantity : n - quantity) / 5),
+      nextPrice: at(side === 'buy' ? n + quantity : n - quantity),
     };
   }
   function expire(state, companyId, now) {
@@ -137,7 +199,11 @@
       const description = String(payload.description || '').trim();
       if (!name || name.length > 40 || description.length > 240) fail('회사 이름은 1~40자, 소개는 240자 이내로 입력해 주세요.');
       if (!integer(payload.basePrice, 1, MAX_BASE)) fail('시작 기준가는 1~10,000피스의 정수로 입력해 주세요.');
-      mk.companies.push({ id, name, description, basePrice: payload.basePrice, quoteVersion: 1, createdAt: now });
+      const before = marketPrices(state);
+      const created = { id, name, description, basePrice: payload.basePrice, quoteVersion: 1, createdAt: now };
+      mk.companies.push(created);
+      mk.linkedLaunch = true;
+      reprice(state, created, before, now);
     } else if (action === 'event') {
       requireAdmin(options); checkId();
       if (mk.events.some((e) => e.id === id)) return state;
@@ -148,11 +214,21 @@
       if (!integer(payload.delta, -100, 100) || payload.delta === 0) fail('변경 폭은 -100~100피스 중 0이 아닌 정수로 입력해 주세요.');
       const after = c.basePrice + payload.delta;
       if (!integer(after, 1, MAX_BASE)) fail('변경 후 기준가는 1~10,000피스여야 해요.');
-      const demand = Math.floor(outstanding(state, c.id) / 5);
+      const before = marketPrices(state);
       mk.events.push({ id, companyId: c.id, companyName: c.name, kind: payload.kind, title, delta: payload.delta,
-        baseBefore: c.basePrice, baseAfter: after, priceBefore: c.basePrice + demand, priceAfter: after + demand, time: now });
+        baseBefore: c.basePrice, baseAfter: after, priceBefore: before.get(c.id), priceAfter: before.get(c.id) + payload.delta, quoteVersion: c.quoteVersion + 1, time: now });
       c.basePrice = after; c.quoteVersion += 1;
       expire(state, c.id, now);
+      const line = linkedCompanies(state);
+      const start = line.findIndex((item) => item.id === c.id);
+      line.forEach((other, index) => {
+        const gap = Math.abs(index - start);
+        const distance = Math.min(gap, line.length - gap);
+        if (!distance) return;
+        const ripple = Math.sign(payload.delta) * Math.max(1, Math.floor(Math.abs(payload.delta) / (distance + 1)));
+        other.basePrice = Math.max(1, Math.min(MAX_BASE, other.basePrice + ripple));
+      });
+      reprice(state, c, before, now);
     } else if (['request', 'buy', 'sell'].includes(action)) {
       const instant = action !== 'request';
       if (instant && payload.side !== action) fail('거래 종류를 다시 확인해 주세요.');
@@ -200,7 +276,7 @@
       }
       if (r.side === 'buy' && m.balance - reservedPieces(state, m.id, r.id) < r.price) fail('승인할 수 있는 피스가 부족해요.', 422);
       if (r.side === 'sell' && availableShares(state, m.id, c.id, r.id) < r.quantity) fail('승인할 수 있는 주식이 부족해요.', 422);
-      const n = outstanding(state, c.id);
+      const before = marketPrices(state);
       let p = mk.holdings.find((p) => p.memberId === m.id && p.companyId === c.id);
       if (!p) { p = { memberId: m.id, companyId: c.id, quantity: 0, costBasis: 0 }; mk.holdings.push(p); }
       if (!integer(p.quantity, 0, MAX_SHARES) || !Number.isFinite(p.costBasis) || p.costBasis < 0) fail('주식 보유 내역을 확인해 주세요.');
@@ -218,10 +294,11 @@
       c.quoteVersion += 1;
       mk.trades.push({ id: r.id, requestId: r.id, memberId: m.id, companyId: c.id, companyName: c.name, side: r.side,
         quantity: r.quantity, total: r.price, average: r.price / r.quantity, realizedProfit,
-        priceBefore: c.basePrice + Math.floor(n / 5), priceAfter: q.nextPrice, time: now });
+        priceBefore: before.get(c.id), priceAfter: q.nextPrice, quoteVersion: c.quoteVersion, time: now });
       state.history.push({ id: `stock-${r.id}`, marketRequestId: r.id, time: now, memberId: m.id,
         delta: r.side === 'buy' ? -r.price : r.price, reason: `주식 ${r.side === 'buy' ? '매수' : '매도'}: ${c.name} ${r.quantity}주`, balanceAfter: m.balance });
       expire(state, c.id, now);
+      reprice(state, c, before, now);
     } else {
       fail('알 수 없는 주식 작업이에요.');
     }
@@ -233,10 +310,10 @@
     const mk = market(state);
     const changes = [...mk.events, ...mk.trades]
       .filter((entry) => entry.companyId === companyId && Number.isFinite(entry.priceAfter) && Number.isFinite(entry.time))
-      .sort((a, b) => a.time - b.time);
-    const initialPrice = changes[0]?.priceBefore ?? c.basePrice;
+      .sort((a, b) => a.time - b.time || (a.quoteVersion || 0) - (b.quoteVersion || 0));
+    const initialPrice = changes[0]?.priceBefore ?? nextPrice(state, c.id);
     return [{ time: c.createdAt, price: initialPrice }, ...changes.map((entry) => ({ time: entry.time, price: entry.priceAfter }))];
   }
 
-  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, MAX_ORDER, MAX_SHARES };
+  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, priceAt, priceCurve, nextPrice, linkedCompanies, neighbors, upgradeLinks, MAX_ORDER, MAX_SHARES };
 });
