@@ -153,12 +153,13 @@
         baseBefore: c.basePrice, baseAfter: after, priceBefore: c.basePrice + demand, priceAfter: after + demand, time: now });
       c.basePrice = after; c.quoteVersion += 1;
       expire(state, c.id, now);
-    } else if (action === 'request' || action === 'buy') {
-      if (action === 'buy' && payload.side !== 'buy') fail('즉시 체결은 매수만 가능해요.');
+    } else if (['request', 'buy', 'sell'].includes(action)) {
+      const instant = action !== 'request';
+      if (instant && payload.side !== action) fail('거래 종류를 다시 확인해 주세요.');
       checkId();
       const existing = state.requests.find((r) => r.id === id);
       if (existing) {
-        if (action === 'buy' && existing.status !== 'approved') fail('새 매수 화면에서 다시 시도해 주세요.', 409);
+        if (instant && existing.status !== 'approved') fail('새 거래 화면에서 다시 시도해 주세요.', 409);
         if (existing.type !== 'stock' || existing.memberId !== payload.memberId || existing.companyId !== payload.companyId
           || existing.side !== payload.side || existing.quantity !== payload.quantity || existing.price !== payload.total
           || existing.quoteVersion !== payload.quoteVersion) fail('이미 사용한 요청 번호예요.');
@@ -174,7 +175,7 @@
       const c = company(state, payload.companyId);
       state.requests.push({ id, type: 'stock', memberId: m.id, companyId: c.id, companyName: c.name, side: payload.side,
         quantity: payload.quantity, price: q.total, quoteVersion: q.quoteVersion, time: now, status: 'pending' });
-      if (action === 'buy') {
+      if (instant) {
         return apply(state, 'decide', { requestId: id, approve: true }, { isAdmin: true, now });
       }
     } else if (action === 'cancel' || action === 'decide') {
@@ -226,5 +227,16 @@
     }
     return state;
   }
-  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, MAX_ORDER, MAX_SHARES };
+  function priceHistory(state, companyId) {
+    const c = company(state, companyId);
+    if (!c) return [];
+    const mk = market(state);
+    const changes = [...mk.events, ...mk.trades]
+      .filter((entry) => entry.companyId === companyId && Number.isFinite(entry.priceAfter) && Number.isFinite(entry.time))
+      .sort((a, b) => a.time - b.time);
+    const initialPrice = changes[0]?.priceBefore ?? c.basePrice;
+    return [{ time: c.createdAt, price: initialPrice }, ...changes.map((entry) => ({ time: entry.time, price: entry.priceAfter }))];
+  }
+
+  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, MAX_ORDER, MAX_SHARES };
 });

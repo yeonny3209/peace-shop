@@ -255,7 +255,7 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
     assert.deepEqual(state.history, legacyState().history);
   });
 
-  test('a family PIN authorizes one immediate buy without exposing the PIN or auto-approving sells', async () => {
+  test('the same family PIN authorizes immediate buys and sells, each settled only once', async () => {
     const { state } = await createCompany();
     const buy = orderPayload(state, 'instant-buy', 'buy', 6);
     const pin = '012345';
@@ -276,9 +276,17 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
       assert.equal(Market.holding(response.body.state, 'm1', 'company').quantity, 6);
     }
     assert.equal((await market('buy', { ...buy, id: 'stale-buy', pin })).status, 409);
-    const sell = await place('still-pending-sale', 'sell', 1);
-    assert.equal(sell.body.state.requests.at(-1).status, 'pending');
-    assert.equal(Market.holding(sell.body.state, 'm1', 'company').quantity, 6);
+    const sale = orderPayload((await current()).state, 'instant-sell', 'sell', 6);
+    assert.equal((await market('sell', { ...sale, pin: '999999' })).status, 403);
+    const sales = await Promise.all([market('sell', { ...sale, pin }), market('sell', { ...sale, pin })]);
+    for (const response of sales) {
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.state.members[0].balance, 1000);
+      assert.equal(response.body.state.requests.at(-1).status, 'approved');
+      assert.equal(response.body.state.market.trades.length, 2);
+      assert.equal(Market.holding(response.body.state, 'm1', 'company').quantity, 0);
+      assert.deepEqual(Market.priceHistory(response.body.state, 'company').map((point) => point.price), [5, 6, 5]);
+    }
   });
 
   test('company creation, event publication, and trading approval enforce admin authentication', async () => {

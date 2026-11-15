@@ -299,7 +299,7 @@
   }
 
   // ---------- Routing ----------
-  const ui = { shopCat: 'all', adminTab: 'approve', historyFilter: 'all' };
+  const ui = { shopCat: 'all', adminTab: 'approve', historyFilter: 'all', chartCompanyId: null };
   const route = () => (['admin', 'market'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'shop');
   const isAuthed = () => safeGet(sessionStorage, AUTH_KEY) === '1';
 
@@ -308,6 +308,7 @@
     const r = route();
     document.querySelectorAll('.mainnav a').forEach((a) => a.classList.toggle('active', a.dataset.route === r));
     app.innerHTML = r === 'admin' ? (isAuthed() ? renderAdmin() : renderLogin()) : r === 'market' ? renderMarket() : renderShop();
+    if (r === 'market') drawPriceChart();
   }
 
   // ---------- Shop (가족용) ----------
@@ -409,6 +410,73 @@
 
   function marketPrice(c) { return c.basePrice + Math.floor(Market.outstanding(state, c.id) / 5); }
 
+  const chartPieces = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 });
+  const priceLabels = (won) => `<strong>${fmt(won)}원</strong><span>${chartPieces.format(Math.trunc(won / 10) / 100)}피스</span>`;
+
+  function marketChart() {
+    const companies = state.market.companies;
+    if (!companies.length) return '';
+    const selected = companies.find((c) => c.id === ui.chartCompanyId) || companies[0];
+    return `<section class="card stock-chart" aria-labelledby="stock-chart-title">
+      <div class="spread"><h2 id="stock-chart-title">주식 가격 그래프</h2>
+      <label>종목 <select id="chart-company">${companies.map((c) => `<option value="${h(c.id)}"${c === selected ? ' selected' : ''}>${h(c.name)}</option>`).join('')}</select></label></div>
+      <div id="stock-chart-body"></div>
+    </section>`;
+  }
+
+  function drawPriceChart() {
+    const choice = $('#chart-company');
+    if (!choice) return;
+    const points = Market.priceHistory(state, choice.value);
+    if (!points.length) return;
+    const prices = points.map((point) => Math.round(point.price * WON_PER_PIECE));
+    let low = prices.reduce((a, b) => Math.min(a, b));
+    let high = prices.reduce((a, b) => Math.max(a, b));
+    if (low === high) { low = Math.max(0, low - 1000); high += 1000; }
+    low = Math.floor(low / 10) * 10;
+    const step = Math.max(10, Math.ceil((high - low) / 40) * 10);
+    high = low + step * 4;
+    const ticks = Array.from({ length: 5 }, (_, i) => high - step * i);
+    const last = points.length - 1;
+    $('#stock-chart-body').innerHTML = `<div class="stock-chart-readout"><div><span id="chart-point-label" class="muted"></span><div class="stock-chart-value" id="chart-point-price"></div></div><span class="meta">다음 1주 매수가 · 1피스 = 1,000원</span></div>
+      <div class="stock-chart-grid"><div class="stock-chart-axis" aria-hidden="true">${ticks.map((won) => `<div>${priceLabels(won)}</div>`).join('')}</div>
+      <div class="stock-chart-plot" aria-hidden="true"><canvas id="stock-price-line" width="900" height="224"></canvas></div></div>
+      ${last ? `<label class="stock-chart-control">가격 기록 보기<input id="chart-point" type="range" min="0" max="${last}" value="${last}" step="1"></label>` : '<p class="muted stock-chart-empty">첫 가격이에요. 거래나 실적·미션이 반영되면 기록이 이어져요.</p>'}`;
+
+    const ctx = $('#stock-price-line').getContext('2d');
+    const input = $('#chart-point');
+    const x = (i) => last ? 12 + i * 876 / last : 450;
+    const y = (won) => 22.4 + (high - won) / (high - low) * 179.2;
+    const update = () => {
+      const index = input ? Number(input.value) : last;
+      const label = index === 0 ? (last ? '시작 가격' : '현재 가격') : index === last ? '현재 가격' : fmtTime(points[index].time);
+      $('#chart-point-label').textContent = label;
+      $('#chart-point-price').innerHTML = priceLabels(prices[index]);
+      input?.setAttribute('aria-valuetext', `${label}, ${fmt(prices[index])}원, ${chartPieces.format(Math.trunc(prices[index] / 10) / 100)}피스`);
+      if (!ctx) return;
+      const palette = getComputedStyle(document.documentElement);
+      ctx.clearRect(0, 0, 900, 224);
+      ctx.beginPath();
+      for (const tick of ticks) { ctx.moveTo(0, y(tick)); ctx.lineTo(900, y(tick)); }
+      ctx.strokeStyle = palette.getPropertyValue('--line').trim();
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x(0), y(prices[0]));
+      prices.slice(1).forEach((won, i) => ctx.lineTo(x(i + 1), y(won)));
+      const accent = palette.getPropertyValue('--accent').trim();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x(index), y(prices[index]), 6, 0, Math.PI * 2);
+      ctx.fillStyle = accent;
+      ctx.fill();
+    };
+    input?.addEventListener('input', update);
+    update();
+  }
+
   function liquidationValue(c, quantity) {
     const total = Market.outstanding(state, c.id);
     let value = 0;
@@ -436,7 +504,7 @@
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
       <p><strong>기준가 + 수요</strong>로 정해져요. 가족 전체가 보유한 주식이 5주 늘 때마다 다음 매수 가격에 1피스가 붙고, 팔면 그만큼 내려가요.</p>
       <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 기준가도 바뀝니다. 여러 주를 한 번에 사고팔면 주마다 단가가 달라질 수 있어 총액을 먼저 보여드려요.</p>
-      <p>매수는 내 매수 PIN을 입력하면 즉시 체결돼요. 매도는 엄마 승인 후 체결되며, 회사의 기준가나 총 보유량이 바뀌면 대기 요청은 만료돼요.</p>
+      <p>매수와 매도는 내 거래 PIN을 입력하면 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
   }
@@ -459,6 +527,7 @@
         <div class="card"><span class="muted">보유 주식 매도 예상액</span><strong>${fmt(value)} <small>피스</small></strong><span class="meta">매입 원가 ${precise(cost)}피스</span></div>
         <div class="card"><span class="muted">보유 주식 평가 손익</span><strong class="${value - cost >= 0 ? 'market-positive' : 'market-negative'}">${value - cost >= 0 ? '+' : ''}${precise(value - cost)} <small>피스</small></strong><span class="meta">매도해 확정한 손익 ${realized >= 0 ? '+' : ''}${precise(realized)}피스</span></div>
       </section>
+      ${marketChart()}
       <section><div class="section-title"><h2>우리 가족 회사</h2></div>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c, i) => {
         const held = Market.holding(state, mid, c.id);
@@ -469,7 +538,7 @@
         return `<article class="card company-card"><div class="spread"><span class="company-symbol" aria-hidden="true">${['🌱', '🍪', '🚀', '🏡'][i % 4]}</span><span class="badge">가족 보유 ${fmt(outstanding)}주</span></div><div><h3>${h(c.name)}</h3><p class="muted company-description">${h(c.description || '함께 키워 가는 우리 가족 회사')}</p></div>
           <div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(price)} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} + 수요 ${fmt(price - c.basePrice)}${sellPrice !== null ? ` · 1주 매도가 ${fmt(sellPrice)}` : ''}</span></div>
           <div class="company-owned"><span>내 보유 <strong>${fmt(held.quantity)}주</strong></span><span class="meta">매도 가능 ${fmt(available)}주</span></div>
-          <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>바로 매수</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>매도 요청</button></div>
+          <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>바로 매수</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>바로 매도</button></div>
         </article>`;
       }).join('')}</div>` : '<div class="card empty"><span class="big">🌱</span><h3>첫 회사를 기다리고 있어요</h3><p>엄마 화면의 ‘주식 관리’에서 회사 이름과 시작 기준가를 정해 주세요.</p><a class="btn primary" href="#admin" data-action="market-admin">회사 만들기</a></div>'}</section>
       ${holdings.length ? `<section class="card"><div class="section-title"><h2>내 보유 주식</h2><span class="muted">현재 기준으로 전량 매도할 때의 예상액</span></div><div class="table-wrap"><table><thead><tr><th>회사</th><th class="right">보유</th><th class="right">평균 매입가</th><th class="right">매도 예상액</th><th class="right">평가 손익</th></tr></thead><tbody>${holdings.map(({ c, held }) => {
@@ -484,8 +553,8 @@
   }
 
   function adminMarket() {
-    const pins = server.on && state.members.length ? `<section class="card"><h3>가족별 매수 PIN</h3><p class="muted">가족마다 다른 숫자 6자리 PIN을 정해 해당 가족에게만 알려 주세요. 이 PIN으로 주식을 바로 살 수 있어요.</p><div class="row">${state.members.map((m) => `<button class="btn" data-action="market-pin" data-id="${h(m.id)}">${h(m.name)} PIN 설정</button>`).join('')}</div></section>` : '';
-    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">매도 요청은 ‘승인’ 탭에서 처리해 주세요. 결과를 반영하면 해당 회사의 대기 요청은 만료돼요.</p></section>
+    const pins = server.on && state.members.length ? `<section class="card"><h3>가족별 거래 PIN</h3><p class="muted">가족마다 다른 숫자 6자리 PIN을 정해 해당 가족에게만 알려 주세요. 이 PIN으로 주식을 바로 사고팔 수 있어요.</p><div class="row">${state.members.map((m) => `<button class="btn" data-action="market-pin" data-id="${h(m.id)}">${h(m.name)} PIN 설정</button>`).join('')}</div></section>` : '';
+    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">이전에 접수된 대기 요청은 ‘승인’ 탭에서 확인할 수 있어요.</p></section>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
       ${pins}<section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
   }
@@ -493,11 +562,11 @@
   function openBuyPin(memberId) {
     const m = member(memberId);
     if (!m) return false;
-    openModal(`<h3>${h(m.name)} 매수 PIN 설정</h3>
+    openModal(`<h3>${h(m.name)} 거래 PIN 설정</h3>
       <label class="field">새 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="new-password" required></label>
       <p class="meta">숫자 6자리로 설정해 주세요.</p>
       <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">PIN 저장</button></div>`, (fd) =>
-      stateAction('api/market', { action: 'set-buy-pin', memberId, pin: fd.get('pin') }, () => state, '매수 PIN을 저장했어요'));
+      stateAction('api/market', { action: 'set-buy-pin', memberId, pin: fd.get('pin') }, () => state, '거래 PIN을 저장했어요'));
     return false;
   }
 
@@ -512,17 +581,17 @@
     let shownQuote = null;
     let shownQuantity = 0;
     const buy = side === 'buy';
-    openModal(`<h3>${h(c.name)} ${buy ? '바로 매수' : '매도 요청'}</h3><p class="muted">${h(me.name)} · 사용 가능 ${fmt(me.balance - pendingOf(mid))}피스 · 매도 가능 ${fmt(Market.availableShares(state, mid, c.id))}주</p>
+    openModal(`<h3>${h(c.name)} ${buy ? '바로 매수' : '바로 매도'}</h3><p class="muted">${h(me.name)} · 사용 가능 ${fmt(me.balance - pendingOf(mid))}피스 · 매도 가능 ${fmt(Market.availableShares(state, mid, c.id))}주</p>
       <label class="field">주식 수량<input type="number" name="quantity" min="1" max="${max}" step="1" inputmode="numeric" value="1" required></label>
       <div class="preview trade-preview" id="trade-preview" aria-live="polite"></div>
-      ${buy && server.on ? '<label class="field">내 매수 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>' : ''}
-      <p class="meta">${buy ? '총액을 확인하고 매수하면 피스가 차감되고 주식이 바로 들어와요.' : '엄마 승인 후 주식이 줄고 피스를 받아요. 주가가 바뀌면 대기 요청은 만료돼요.'}</p>
-      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">${buy ? '매수 확정' : '요청 보내기'}</button></div>`, async (fd) => {
+      ${server.on ? '<label class="field">내 거래 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>' : ''}
+      <p class="meta">${buy ? '총액을 확인하고 매수하면 피스가 차감되고 주식이 바로 들어와요.' : '총액을 확인하고 매도하면 주식이 줄고 피스가 바로 들어와요.'}</p>
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">${buy ? '매수 확정' : '매도 확정'}</button></div>`, async (fd) => {
       const quantity = Number(fd.get('quantity'));
       if (!shownQuote || quantity !== shownQuantity) { toast('수량과 거래 총액을 확인해 주세요'); return false; }
-      return marketAction(buy ? 'buy' : 'request', { id: requestId, memberId: mid, companyId: c.id, side, quantity,
-        quoteVersion: shownQuote.quoteVersion, total: shownQuote.total, ...(buy && server.on ? { pin: fd.get('pin') } : {}) },
-      buy ? '주식을 매수했어요' : '매도 요청을 보냈어요. 엄마 승인을 기다려 주세요');
+      return marketAction(side, { id: requestId, memberId: mid, companyId: c.id, side, quantity,
+        quoteVersion: shownQuote.quoteVersion, total: shownQuote.total, ...(server.on ? { pin: fd.get('pin') } : {}) },
+      buy ? '주식을 매수했어요' : '주식을 매도했어요');
     });
     const input = $('input[name="quantity"]', modal);
     const update = () => {
@@ -1193,6 +1262,7 @@
       + (c.left ? ` · 남는 ${c.left}장은 ${state.settings.leftover === 'carry' ? '다음에 이월' : '버림'}` : '');
   });
   document.addEventListener('change', (e) => {
+    if (e.target.id === 'chart-company') { ui.chartCompanyId = e.target.value; drawPriceChart(); }
     if (e.target.closest('#workbook-form')) e.target.dispatchEvent(new Event('input', { bubbles: true }));
     if (e.target.id === 'import-file' && e.target.files[0]) {
       const reader = new FileReader();

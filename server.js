@@ -71,7 +71,7 @@ const hashBuyPin = (pin, salt) => crypto.scryptSync(pin + auth.secret, salt, 32)
 
 function checkBuyPin(memberId, pin) {
   const saved = auth.buyPins && Object.hasOwn(auth.buyPins, memberId) ? auth.buyPins[memberId] : null;
-  if (!saved) return '엄마 화면의 주식 관리에서 내 매수 PIN을 먼저 설정해 주세요.';
+  if (!saved) return '엄마 화면의 주식 관리에서 내 거래 PIN을 먼저 설정해 주세요.';
   const now = Date.now();
   const previous = buyPinAttempts.get(memberId);
   const attempts = previous?.until > now ? previous : { count: 0, until: now + 600000 };
@@ -79,7 +79,7 @@ function checkBuyPin(memberId, pin) {
   if (!validBuyPin(pin) || !crypto.timingSafeEqual(hashBuyPin(pin, saved.salt), Buffer.from(saved.hash, 'hex'))) {
     attempts.count++;
     buyPinAttempts.set(memberId, attempts);
-    return '매수 PIN이 맞지 않아요.';
+    return '거래 PIN이 맞지 않아요.';
   }
   buyPinAttempts.delete(memberId);
   return null;
@@ -262,7 +262,7 @@ async function api(req, res, url) {
     const payload = await body(req);
     return locked(async () => {
       if (!db.state) return send(res, 403, { error: '상점을 먼저 열어 주세요.' });
-      if (payload.action === 'set-buy-pin' || payload.action === 'buy') {
+      if (['set-buy-pin', 'buy', 'sell'].includes(payload.action)) {
         const member = db.state.members.find((m) => m.id === payload.memberId);
         if (!member) return send(res, 404, { error: '가족을 먼저 선택해 주세요.' });
         if (payload.action === 'set-buy-pin') {
