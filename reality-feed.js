@@ -50,9 +50,9 @@ function impactFor(article) {
   if (/(밀가루|밀\s*가격|제빵\s*원가)/.test(text) && /(가격\s*하락|공급\s*회복|안정세)/.test(text)) return { company: '우리집베이커리', delta: 1, reason: '밀 원료 비용 완화가 빵 생산에 유리할 수 있다는 기사 내용' };
   if (/(종이|펄프|문구\s*원가)/.test(text) && /(가격\s*(?:급)?상승|급등|공급난)/.test(text)) return { company: '반짝문구', delta: -1, reason: '종이 원료 비용 상승이 문구 회사에 부담이 될 수 있다는 기사 내용' };
   if (/(종이|펄프|문구\s*원가)/.test(text) && /(가격\s*하락|공급\s*회복|안정세)/.test(text)) return { company: '반짝문구', delta: 1, reason: '종이 원료 비용 완화가 문구 회사에 유리할 수 있다는 기사 내용' };
-  if (/(보드게임|게임)/.test(text) && /(판매\s*증가|매출\s*증가|인기|흥행|이용자\s*증가)/.test(text)) return { company: /보드게임/.test(text) ? '즐거운보드게임' : '피스게임즈', delta: 1, reason: '게임 판매·이용 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
+  if (/(보드게임|게임)/.test(text) && /(판매\s*증가|매출\s*증가|인기|흥행|이용자\s*증가|성장\s*견인|시장\s*성장|신작\s*출시)/.test(text)) return { company: /보드게임/.test(text) ? '즐거운보드게임' : '피스게임즈', delta: 1, reason: '게임 판매·이용 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
   if (/(보드게임|게임)/.test(text) && /(판매\s*감소|매출\s*감소|이용자\s*감소|서비스\s*종료)/.test(text)) return { company: /보드게임/.test(text) ? '즐거운보드게임' : '피스게임즈', delta: -1, reason: '게임 판매·이용 수요 감소가 회사에 불리할 수 있다는 기사 내용' };
-  if (/(과자|제과)/.test(text) && /(판매\s*증가|매출\s*증가|수요\s*증가|인기)/.test(text)) return { company: '바삭과자', delta: 1, reason: '과자 판매 또는 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
+  if (/(과자|제과)/.test(text) && /(판매\s*증가|매출\s*증가|수요\s*증가|인기|물량\s*확대|신제품\s*출시|선물세트\s*출시)/.test(text)) return { company: '바삭과자', delta: 1, reason: '과자 판매 또는 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
   if (/(과자|제과)/.test(text) && /(판매\s*감소|매출\s*감소|수요\s*감소)/.test(text)) return { company: '바삭과자', delta: -1, reason: '과자 판매 또는 수요 감소가 회사에 불리할 수 있다는 기사 내용' };
   return null;
 }
