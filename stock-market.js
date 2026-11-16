@@ -24,8 +24,17 @@
   function outstanding(state, companyId) {
     return market(state).holdings.filter((p) => p.companyId === companyId).reduce((n, p) => n + p.quantity, 0);
   }
-  const linkOrder = ['바삭과자', '달콤초콜릿', '우리집베이커리', '달콤음료', '한밤라면', '초록텃밭', '반짝문구', '피스게임즈'];
+  const originalLinks = ['바삭과자', '달콤초콜릿', '우리집베이커리', '달콤음료', '한밤라면', '초록텃밭', '반짝문구', '피스게임즈'];
+  const expansion = {
+    우리집베이커리: { id: 'linked-fruit-jam', name: '달콤잼', description: '빵에 발라 먹는 과일잼을 만들어요.', basePrice: 3 },
+    달콤음료: { id: 'linked-fresh-juice', name: '상큼주스', description: '가족이 좋아하는 과일을 골라 주스를 만들어요.', basePrice: 3 },
+    한밤라면: { id: 'linked-snack-bar', name: '든든분식', description: '라면과 함께 먹을 떡볶이와 주먹밥을 만들어요.', basePrice: 4 },
+    초록텃밭: { id: 'linked-fruit-farm', name: '싱싱과일', description: '제철 과일을 키우고 수확해요.', basePrice: 3 },
+    반짝문구: { id: 'linked-notebooks', name: '쓱쓱노트', description: '공부와 그림에 쓰는 노트를 만들어요.', basePrice: 2 },
+    피스게임즈: { id: 'linked-board-games', name: '즐거운보드게임', description: '온 가족이 식탁에 모여 할 보드게임을 만들어요.', basePrice: 4 },
+  };
   const nameKey = (name) => String(name).replace(/\s/g, '');
+  const linkOrder = originalLinks.flatMap((name) => expansion[name] ? [name, nameKey(expansion[name].name)] : [name]);
   function linkedCompanies(state) {
     const companies = market(state).companies;
     const byName = new Map(companies.map((c) => [nameKey(c.name), c]));
@@ -83,6 +92,31 @@
       expire(state, c.id, now);
     }
     mk.linkedLaunch = true;
+    return state;
+  }
+
+  function expandLinks(input, now = Date.now()) {
+    if (!input || market(input).linkedExpansion) return input;
+    const names = new Set(market(input).companies.map((c) => nameKey(c.name)));
+    if (!originalLinks.every((name) => names.has(name))) return input;
+    const state = clone(input);
+    const mk = state.market;
+    const before = marketPrices(state);
+    for (const stock of Object.values(expansion)) {
+      if (names.has(nameKey(stock.name))) continue;
+      const id = company(state, stock.id) ? `${stock.id}-${now}` : stock.id;
+      mk.companies.push({ ...stock, id, quoteVersion: 1, createdAt: now });
+    }
+    for (const c of mk.companies) {
+      if (!before.has(c.id)) continue;
+      c.quoteVersion++;
+      expire(state, c.id, now);
+      const after = nextPrice(state, c.id);
+      if (before.get(c.id) === after) continue;
+      mk.events.push({ id: `expanded-links-${now}-${mk.events.length}`, companyId: c.id, companyName: c.name, kind: 'linked',
+        title: '새 종목 연결', priceBefore: before.get(c.id), priceAfter: after, quoteVersion: c.quoteVersion, time: now });
+    }
+    mk.linkedExpansion = true;
     return state;
   }
   function holding(state, memberId, companyId) {
@@ -315,5 +349,5 @@
     return [{ time: c.createdAt, price: initialPrice }, ...changes.map((entry) => ({ time: entry.time, price: entry.priceAfter }))];
   }
 
-  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, priceAt, priceCurve, nextPrice, linkedCompanies, neighbors, upgradeLinks, MAX_ORDER, MAX_SHARES };
+  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, priceAt, priceCurve, nextPrice, linkedCompanies, neighbors, upgradeLinks, expandLinks, MAX_ORDER, MAX_SHARES };
 });

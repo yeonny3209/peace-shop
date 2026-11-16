@@ -87,6 +87,25 @@ test('linked launch adds chocolate once and formation includes every company', (
   assert.equal(Market.priceHistory(moved, 'bread').at(-1).price, 5);
 });
 
+test('market expansion keeps existing positions and inserts six related companies once', () => {
+  let state = legacyState();
+  const names = ['바삭과자', '달콤초콜릿', '우리집 베이커리', '달콤음료', '한밤라면', '초록텃밭', '반짝문구', '피스게임즈'];
+  names.forEach((name, i) => {
+    state = Market.apply(state, 'company-create', { id: `stock-${i}`, name, basePrice: 3 }, admin);
+  });
+  const { total, quoteVersion } = Market.quote(state, 'stock-2', 'buy', 3);
+  state = Market.apply(state, 'buy', { id: 'bakery-before-expansion', companyId: 'stock-2', memberId: 'm1', side: 'buy', quantity: 3, total, quoteVersion }, admin);
+  const expanded = Market.expandLinks(state, 1700000001000);
+  assert.equal(expanded.market.companies.length, 14);
+  assert.equal(Market.expandLinks(expanded), expanded);
+  assert.deepEqual(expanded.market.holdings, state.market.holdings);
+  assert.deepEqual(expanded.members, state.members);
+  assert.deepEqual(expanded.market.trades, state.market.trades);
+  assert.deepEqual(Market.neighbors(expanded, 'linked-fruit-jam').map((c) => c.name), ['우리집 베이커리', '달콤음료']);
+  assert.equal(Market.nextPrice(expanded, 'linked-fruit-jam'), 4);
+  assert.equal(Market.validate(expanded), true);
+});
+
 test('company creation, price events, and approval require admin authority', () => {
   assert.throws(() => Market.apply(legacyState(), 'company-create', { id: 'company', name: '회사', basePrice: 5 }), errorStatus(401));
   const state = companyState();

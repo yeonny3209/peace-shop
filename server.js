@@ -383,7 +383,7 @@ async function main() {
   db = (await store.get('state')) || db;
   if (db.state) {
     db.state = Market.ensure(db.state);
-    const linked = Market.upgradeLinks(db.state);
+    const linked = Market.expandLinks(Market.upgradeLinks(db.state));
     if (linked !== db.state) await commit(linked);
   }
   auth = { ...auth, ...(await store.get('auth')) };
