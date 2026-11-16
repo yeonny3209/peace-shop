@@ -309,19 +309,12 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
     assert.deepEqual(state.history, legacyState().history);
   });
 
-  test('the same family PIN authorizes immediate buys and sells, each settled only once', async () => {
+  test('immediate buys and sells work without a PIN, each settled only once', async () => {
     const { state } = await createCompany();
     const buy = orderPayload(state, 'instant-buy', 'buy', 6);
-    const pin = '012345';
-    assert.equal((await market('set-buy-pin', { memberId: 'm1', pin })).status, 403);
-    assert.equal((await market('buy', { ...buy, pin })).status, 403);
-    const setup = await market('set-buy-pin', { memberId: 'm1', pin }, true);
-    assert.equal(setup.status, 200);
-    assert.doesNotMatch(JSON.stringify(setup.body), /012345|buyPins/);
-    assert.equal((await market('buy', { ...buy, pin: '999999' })).status, 403);
-    assert.equal((await market('buy', { ...buy, memberId: 'm2', pin })).status, 403);
+    assert.equal((await market('buy', { ...buy, memberId: 'missing-member' })).status, 404);
     assert.equal((await current()).state.members[0].balance, 1000);
-    const results = await Promise.all([market('buy', { ...buy, pin }), market('buy', { ...buy, pin })]);
+    const results = await Promise.all([market('buy', buy), market('buy', buy)]);
     for (const response of results) {
       assert.equal(response.status, 200, JSON.stringify(response.body));
       assert.equal(response.body.state.members[0].balance, 1000 - buy.total);
@@ -329,10 +322,9 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
       assert.equal(response.body.state.market.trades.length, 1);
       assert.equal(Market.holding(response.body.state, 'm1', 'company').quantity, 6);
     }
-    assert.equal((await market('buy', { ...buy, id: 'stale-buy', pin })).status, 409);
+    assert.equal((await market('buy', { ...buy, id: 'stale-buy' })).status, 409);
     const sale = orderPayload((await current()).state, 'instant-sell', 'sell', 6);
-    assert.equal((await market('sell', { ...sale, pin: '999999' })).status, 403);
-    const sales = await Promise.all([market('sell', { ...sale, pin }), market('sell', { ...sale, pin })]);
+    const sales = await Promise.all([market('sell', sale), market('sell', sale)]);
     for (const response of sales) {
       assert.equal(response.status, 200, JSON.stringify(response.body));
       assert.equal(response.body.state.members[0].balance, 1000);

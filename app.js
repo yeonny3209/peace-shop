@@ -505,7 +505,7 @@
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
       <p>한 종목의 주식을 사고팔면 그 종목의 보유량, 이웃 종목과 합친 보유량, 시장 전체 보유량이 함께 바뀌어요. 종목 자체는 5주 구간, 연결된 두 종목은 합계 3주 구간, 시장 전체는 합계 5주 구간을 넘을 때마다 1피스씩 움직여요.</p>
       <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 연결을 따라 다른 종목의 기준가에도 영향이 퍼져요. 멀리 있는 종목일수록 영향이 작아져요.</p>
-      <p>매수와 매도는 내 거래 PIN을 입력하면 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
+      <p>내 이름을 고르고 수량과 총액을 확인하면 매수와 매도가 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
   }
@@ -557,21 +557,9 @@
   }
 
   function adminMarket() {
-    const pins = server.on && state.members.length ? `<section class="card"><h3>가족별 거래 PIN</h3><p class="muted">가족마다 다른 숫자 6자리 PIN을 정해 해당 가족에게만 알려 주세요. 이 PIN으로 주식을 바로 사고팔 수 있어요.</p><div class="row">${state.members.map((m) => `<button class="btn" data-action="market-pin" data-id="${h(m.id)}">${h(m.name)} PIN 설정</button>`).join('')}</div></section>` : '';
     return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">이전에 접수된 대기 요청은 ‘승인’ 탭에서 확인할 수 있어요.</p></section>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
-      ${pins}<section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
-  }
-
-  function openBuyPin(memberId) {
-    const m = member(memberId);
-    if (!m) return false;
-    openModal(`<h3>${h(m.name)} 거래 PIN 설정</h3>
-      <label class="field">새 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="new-password" required></label>
-      <p class="meta">숫자 6자리로 설정해 주세요.</p>
-      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">PIN 저장</button></div>`, (fd) =>
-      stateAction('api/market', { action: 'set-buy-pin', memberId, pin: fd.get('pin') }, () => state, '거래 PIN을 저장했어요'));
-    return false;
+      <section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
   }
 
   function openTrade(companyId, side) {
@@ -588,13 +576,12 @@
     openModal(`<h3>${h(c.name)} ${buy ? '바로 매수' : '바로 매도'}</h3><p class="muted">${h(me.name)} · 사용 가능 ${fmt(me.balance - pendingOf(mid))}피스 · 매도 가능 ${fmt(Market.availableShares(state, mid, c.id))}주</p>
       <label class="field">주식 수량<input type="number" name="quantity" min="1" max="${max}" step="1" inputmode="numeric" value="1" required></label>
       <div class="preview trade-preview" id="trade-preview" aria-live="polite"></div>
-      ${server.on ? '<label class="field">내 거래 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>' : ''}
       <p class="meta">${buy ? '총액을 확인하고 매수하면 피스가 차감되고 주식이 바로 들어와요.' : '총액을 확인하고 매도하면 주식이 줄고 피스가 바로 들어와요.'}</p>
       <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">${buy ? '매수 확정' : '매도 확정'}</button></div>`, async (fd) => {
       const quantity = Number(fd.get('quantity'));
       if (!shownQuote || quantity !== shownQuantity) { toast('수량과 거래 총액을 확인해 주세요'); return false; }
       return marketAction(side, { id: requestId, memberId: mid, companyId: c.id, side, quantity,
-        quoteVersion: shownQuote.quoteVersion, total: shownQuote.total, ...(server.on ? { pin: fd.get('pin') } : {}) },
+        quoteVersion: shownQuote.quoteVersion, total: shownQuote.total },
       buy ? '주식을 매수했어요' : '주식을 매도했어요');
     });
     const input = $('input[name="quantity"]', modal);
@@ -934,7 +921,6 @@
   // ---------- Actions ----------
   const actions = {
     'market-buy': (id) => openTrade(id, 'buy'),
-    'market-pin': (id) => openBuyPin(id),
     'market-sell': (id) => openTrade(id, 'sell'),
     'market-create': () => openCompanyCreate(),
     'market-event': (id) => openMarketEvent(id),
