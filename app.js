@@ -497,7 +497,7 @@
       const delta = entry.delta;
       const detail = entry.activityType === 'trade' ? `총 ${fmt(entry.total ?? entry.price ?? 0)}피스` : Number.isFinite(delta) ? `기준가 ${delta >= 0 ? '+' : ''}${fmt(delta)}피스` : '연동 변화';
       const move = Number.isFinite(entry.priceBefore) && Number.isFinite(entry.priceAfter) ? `<div class="meta">다음 매수가 ${fmt(entry.priceBefore)} → ${fmt(entry.priceAfter)}피스</div>` : '';
-      const source = entry.kind === 'reality' ? `<div class="meta">${entry.isForecast ? '예보·전망' : '발표·보도'} · 소식 ${h(entry.eventDate)} · 출처 게시 ${h(entry.publishedAt)} · ${h(entry.sourceName)} · ${h(entry.region)} · ${h(entry.factSummary)}</div><div class="meta">가격 반영 이유: ${h(entry.reasoning)}</div>${String(entry.sourceUrl || '').startsWith('https://') ? `<a class="meta" href="${h(entry.sourceUrl)}" target="_blank" rel="noopener noreferrer">출처 보기 ↗</a>` : ''}` : '';
+      const source = entry.kind === 'reality' ? `<div class="meta">${entry.isAutomatic ? '자동 수집' : '엄마가 입력'} · ${entry.isForecast ? '예보·전망' : '발표·보도'} · 소식 ${h(entry.eventDate)} · 출처 게시 ${h(entry.publishedAt)} · ${h(entry.sourceName)} · ${h(entry.region)} · ${h(entry.factSummary)}</div><div class="meta">가격 반영 이유: ${h(entry.reasoning)}</div>${String(entry.sourceUrl || '').startsWith('https://') ? `<a class="meta" href="${h(entry.sourceUrl)}" target="_blank" rel="noopener noreferrer">원문 또는 검색 결과 ↗</a>` : ''}` : '';
       return `<li><div><span class="meta">${h(c?.name || entry.companyName || '회사')} · ${fmtTime(entry.time || entry.createdAt)}</span><div>${h(label)}</div>${move}${source}</div><span class="badge ${entry.activityType === 'event' ? 'gold' : ''}">${h(detail)}</span></li>`;
     }).join('')}</ul>`;
   }
@@ -506,7 +506,7 @@
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
       <p>한 종목의 주식을 사고팔면 그 종목의 보유량, 이웃 종목과 합친 보유량, 시장 전체 보유량이 함께 바뀌어요. 종목 자체는 5주 구간, 연결된 두 종목은 합계 3주 구간, 시장 전체는 합계 5주 구간을 넘을 때마다 1피스씩 움직여요.</p>
       <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 연결을 따라 다른 종목의 기준가에도 영향이 퍼져요. 현실 소식은 출처와 가격에 영향을 주는 이유를 함께 기록하고, 선택한 회사에 ±1~2피스, ±2일 때 바로 이웃 회사에 ±1피스까지 반영해요. 현실 소식은 하루 최대 2건, 종목별 하루 최대 ±2피스예요.</p>
-      <p>날씨·계절·뉴스를 읽고 엄마가 직접 골라 반영하는 가족용 가상 가격이에요. 사이트가 뉴스를 자동 수집하거나 실제 주식 가격을 가져오는 기능은 아니며, 실제 투자와 무관합니다.</p>
+      <p>서버가 뉴스 검색 RSS에서 회사와 연관된 제목을 6시간마다 확인하고, 정해 둔 단어 규칙에 맞는 소식만 자동 반영해요. 기사는 Google 뉴스 검색 결과를 사용하며, 지역별 기상 예보는 아닙니다. 가격 효과는 실제 기업의 실적 분석이 아닌 가족용 단순 규칙이고 실제 투자와 무관합니다.</p>
       <p>내 이름을 고르고 수량과 총액을 확인하면 매수와 매도가 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
@@ -559,7 +559,7 @@
   }
 
   function adminMarket() {
-    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적·미션이나 출처가 확인된 현실 소식으로 기준가를 조정해요.</p></div><div class="actions"><button class="btn" data-action="market-reality-event" ${state.market.companies.length ? '' : 'disabled'}>📰 현실 소식 반영</button><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div></div><p class="meta">현실 소식은 엄마가 출처와 가격 영향 이유를 확인해 직접 적용해요. 하루 최대 2건, 종목별 변화량은 하루 ±2피스까지예요. 아직 접수된 대기 요청은 ‘승인’ 탭에서 확인할 수 있어요.</p></section>
+    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적·미션 결과와 자동 수집 현실 소식을 반영해요.</p></div><div class="actions"><button class="btn" data-action="market-reality-event" ${state.market.companies.length ? '' : 'disabled'}>📰 현실 소식 직접 입력</button><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div></div><p class="meta">서버가 뉴스·날씨 관련 검색 RSS를 6시간마다 확인해 정해 둔 단어 규칙에 따라 자동 반영합니다. 하루 최대 2건, 종목별 하루 변화량은 ±2피스까지예요. Render 무료 서버가 잠들면 다음 접속 후 확인을 재개합니다. 대기 거래는 해당 회사 가격이 바뀌면 만료돼요.</p></section>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
       <section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
   }

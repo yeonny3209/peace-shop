@@ -212,7 +212,7 @@
       mk.events.push({ id: index === 0 ? id : `${id}-r${index}`, realityEventId: id, companyId: target.id,
         companyName: target.name, kind: 'reality', category: payload.category, title,
         factSummary, reasoning, sourceName, sourceUrl, region, eventDate, publishedAt,
-        isForecast: payload.isForecast, targetCompanyId: c.id, delta, day,
+        isForecast: payload.isForecast, isAutomatic: payload.isAutomatic === true, targetCompanyId: c.id, delta, day,
         baseBefore: target.basePrice - delta, baseAfter: target.basePrice,
         priceBefore: before.get(target.id), priceAfter: after, quoteVersion: target.quoteVersion, time: now });
     });

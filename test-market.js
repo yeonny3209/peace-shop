@@ -221,7 +221,7 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
     const port = await availablePort();
     origin = `http://127.0.0.1:${port}`;
     output = '';
-    const env = { ...process.env, PORT: String(port), DATA_DIR: directory, RENDER_EXTERNAL_URL: 'https://peace-shop.test' };
+    const env = { ...process.env, PORT: String(port), DATA_DIR: directory, RENDER_EXTERNAL_URL: 'https://peace-shop.test', PEACE_SHOP_DISABLE_REALITY_FEEDS: '1' };
     delete env.UPSTASH_REDIS_REST_URL;
     delete env.UPSTASH_REDIS_REST_TOKEN;
     delete env.UPSTASH_REDIS_TOKEN;

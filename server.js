@@ -10,6 +10,7 @@ const os = require('os');
 const crypto = require('crypto');
 const webpush = require('web-push');
 const Market = require('./stock-market');
+const RealityFeed = require('./reality-feed');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
@@ -94,6 +95,72 @@ async function commit(state) {
 // 쓰기 요청은 하나씩 차례로 처리한다.
 let lock = Promise.resolve();
 const locked = (fn) => { const run = lock.then(fn, fn); lock = run.catch(() => {}); return run; };
+
+const FEED_INTERVAL = 6 * 60 * 60 * 1000;
+let feedScanRunning = false;
+const koreaDate = (time) => new Date(time + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const normalizedName = (name) => String(name || '').replace(/\s/g, '');
+async function pollRealityFeeds() {
+  if (process.env.PEACE_SHOP_DISABLE_REALITY_FEEDS === '1' || feedScanRunning || !db.state?.market?.companies?.length) return;
+  feedScanRunning = true;
+  try {
+    const now = Date.now();
+    const groups = await Promise.all(RealityFeed.feeds.map(async (feed) => {
+      const query = encodeURIComponent(`${feed.query} when:1d`);
+      const url = `https://news.google.com/rss/search?q=${query}&hl=ko&gl=KR&ceid=KR%3Ako`;
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(12000), headers: { 'user-agent': 'PeaceShopFamilyMarket/1.0' } });
+        if (!response.ok) throw new Error(`news RSS ${response.status}`);
+        return RealityFeed.parseRss(await response.text(), feed.category, now);
+      } catch (error) {
+        console.warn(`현실 소식 피드 읽기 실패 (${feed.category}): ${error.message}`);
+        return [];
+      }
+    }));
+    const articles = new Map();
+    groups.flat().forEach((article) => {
+      const previous = articles.get(article.link);
+      if (!previous || article.publishedAt > previous.publishedAt) articles.set(article.link, article);
+    });
+    const candidates = [...articles.values()].map((article) => ({ article, impact: RealityFeed.impactFor(article) }))
+      .filter((item) => item.impact).sort((a, b) => b.article.publishedAt.localeCompare(a.article.publishedAt));
+    for (const { article, impact } of candidates) {
+      const company = db.state.market.companies.find((c) => normalizedName(c.name) === normalizedName(impact.company));
+      if (!company) continue;
+      const id = `auto-${sha256(article.link).slice(0, 40)}`;
+      const publishedMs = Date.parse(article.publishedAt);
+      const day = koreaDate(publishedMs);
+      const payload = {
+        id, companyId: company.id, category: article.category, title: article.title,
+        eventDate: day, publishedAt: day, region: '전국 검색 뉴스', sourceName: article.sourceName,
+        sourceUrl: article.link, factSummary: article.title, reasoning: impact.reason,
+        delta: impact.delta, isForecast: article.category === 'weather' && /(예보|전망|예상)/.test(article.title), isAutomatic: true,
+      };
+      await locked(async () => {
+        if (!db.state || db.state.market.events.some((event) => event.realityEventId === id || event.id === id)) return;
+        const beforeCount = db.state.market.events.length;
+        try {
+          const next = Market.apply(db.state, 'reality-event', payload, { isAdmin: true, now: Date.now(), id });
+          if (next.market.events.length !== beforeCount) {
+            Market.validate(next);
+            await commit(next);
+            console.log(`현실 소식 자동 반영: ${company.name} ${impact.delta > 0 ? '+' : ''}${impact.delta}피스 — ${article.title}`);
+          }
+        } catch (error) {
+          if (error.status !== 429) console.warn(`현실 소식 반영 건너뜀: ${error.message}`);
+        }
+      });
+      const todayCount = new Set(db.state?.market?.events.filter((event) => event.kind === 'reality' && event.day === koreaDate(Date.now())).map((event) => event.realityEventId || event.id) || []).size;
+      if (todayCount >= 2) break;
+    }
+  } finally {
+    feedScanRunning = false;
+  }
+}
+const scheduleRealityFeedScan = () => {
+  const timer = setTimeout(() => pollRealityFeeds().catch((error) => console.warn('현실 소식 확인 실패:', error.message)), 1500);
+  timer.unref?.();
+};
 
 // 일반 가족은 기존 상점 요청만 수정한다. 주식 요청은 /api/market에서 검증한다.
 function mergeFamily(cur, inc) {
@@ -246,6 +313,7 @@ async function api(req, res, url) {
       const before = new Set(db.state.requests.map((r) => r.id));
       const next = Market.apply(db.state, payload.action, payload, { isAdmin, id: uid });
       await commit(next);
+      if (payload.action === 'company-create') scheduleRealityFeedScan();
       const added = next.requests.filter((r) => r.type === 'stock' && r.status === 'pending' && !before.has(r.id));
       if (added.length) notify(added, next).catch((e) => console.error('push 실패', e.message));
       return send(res, 200, view());
@@ -260,6 +328,7 @@ async function api(req, res, url) {
         const next = Market.ensure(seed(clean(state)));
         Market.validate(next);
         await commit(next);
+        scheduleRealityFeedScan();
       }
       return send(res, 200, view());
     });
@@ -383,6 +452,9 @@ async function main() {
     for (const list of Object.values(os.networkInterfaces())) {
       for (const i of list || []) if (i.family === 'IPv4' && !i.internal) console.log(`  같은 와이파이의 가족 기기:  http://${i.address}:${PORT}`);
     }
+    scheduleRealityFeedScan();
+    const timer = setInterval(() => pollRealityFeeds().catch((error) => console.warn('현실 소식 확인 실패:', error.message)), FEED_INTERVAL);
+    timer.unref?.();
   });
 }
 
