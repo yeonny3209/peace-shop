@@ -7,6 +7,7 @@
   const MAX_ORDER = 100;
   const MAX_SHARES = 10000;
   const MAX_BASE = 10000;
+  const MAX_REALITY_EVENTS_PER_DAY = 2;
   const statuses = ['pending', 'approved', 'rejected', 'cancelled', 'expired'];
   const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
   const integer = (n, min, max) => Number.isSafeInteger(n) && n >= min && n <= max;
@@ -162,6 +163,60 @@
   function requireAdmin(options) {
     if (!options.isAdmin) fail('엄마 로그인이 필요해요.', 401);
   }
+  const koreaDay = (time) => new Date(time + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const validDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+    && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+  function applyRealityEvent(state, payload, id, now) {
+    const mk = state.market;
+    const c = company(state, payload.companyId);
+    if (!c) fail('회사를 찾을 수 없어요.', 404);
+    const title = String(payload.title || '').trim();
+    const factSummary = String(payload.factSummary || '').trim();
+    const reasoning = String(payload.reasoning || '').trim();
+    const sourceName = String(payload.sourceName || '').trim();
+    const sourceUrl = String(payload.sourceUrl || '').trim();
+    const region = String(payload.region || '').trim();
+    const eventDate = String(payload.eventDate || '').trim();
+    const publishedAt = String(payload.publishedAt || '').trim();
+    if (!['weather', 'season', 'news'].includes(payload.category) || !title || title.length > 100
+      || !factSummary || factSummary.length > 500 || !reasoning || reasoning.length > 300
+      || !sourceName || sourceName.length > 80 || !region || region.length > 80 || sourceUrl.length > 1000
+      || !validDay(eventDate) || !validDay(publishedAt)
+      || typeof payload.isForecast !== 'boolean' || !integer(payload.delta, -2, 2) || payload.delta === 0) {
+      fail('소식, 출처, 날짜, 영향 종목과 ±1~2피스 변화를 모두 확인해 주세요.');
+    }
+    let parsed;
+    try { parsed = new URL(sourceUrl); } catch { fail('출처 링크는 https 주소로 입력해 주세요.'); }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) fail('출처 링크는 https 주소로 입력해 주세요.');
+    const day = koreaDay(now);
+    const todayEvents = [...new Set(mk.events.filter((e) => e.kind === 'reality' && e.day === day).map((e) => e.realityEventId || e.id))];
+    if (todayEvents.length >= MAX_REALITY_EVENTS_PER_DAY) fail('현실 소식은 하루에 최대 2건까지 반영할 수 있어요.', 429);
+    const priorByCompany = new Map();
+    mk.events.filter((e) => e.kind === 'reality' && e.day === day).forEach((e) => {
+      priorByCompany.set(e.companyId, (priorByCompany.get(e.companyId) || 0) + Math.abs(e.delta || 0));
+    });
+    const affected = [{ c, delta: payload.delta }];
+    if (Math.abs(payload.delta) === 2) {
+      neighbors(state, c.id).forEach((other) => affected.push({ c: other, delta: Math.sign(payload.delta) }));
+    }
+    affected.forEach(({ c: target, delta }) => {
+      if ((priorByCompany.get(target.id) || 0) + Math.abs(delta) > 2) fail(`${target.name}의 오늘 현실 소식 변화 한도(±2피스)에 도달했어요.`, 429);
+      if (!integer(target.basePrice + delta, 1, MAX_BASE)) fail(`${target.name}의 기준가는 1~10,000피스 범위여야 해요.`);
+    });
+    const before = marketPrices(state);
+    affected.forEach(({ c: target, delta }, index) => {
+      target.basePrice += delta;
+      target.quoteVersion++;
+      expire(state, target.id, now);
+      const after = nextPrice(state, target.id);
+      mk.events.push({ id: index === 0 ? id : `${id}-r${index}`, realityEventId: id, companyId: target.id,
+        companyName: target.name, kind: 'reality', category: payload.category, title,
+        factSummary, reasoning, sourceName, sourceUrl, region, eventDate, publishedAt,
+        isForecast: payload.isForecast, targetCompanyId: c.id, delta, day,
+        baseBefore: target.basePrice - delta, baseAfter: target.basePrice,
+        priceBefore: before.get(target.id), priceAfter: after, quoteVersion: target.quoteVersion, time: now });
+    });
+  }
   function validate(state) {
     if (!state || !['members', 'products', 'requests', 'history'].every((k) => Array.isArray(state[k]))) fail('올바른 상점 백업이 아니에요.');
     const memberIds = new Set();
@@ -263,6 +318,10 @@
         other.basePrice = Math.max(1, Math.min(MAX_BASE, other.basePrice + ripple));
       });
       reprice(state, c, before, now);
+    } else if (action === 'reality-event') {
+      requireAdmin(options); checkId();
+      if (mk.events.some((e) => e.realityEventId === id || e.id === id)) return state;
+      applyRealityEvent(state, payload, id, now);
     } else if (['request', 'buy', 'sell'].includes(action)) {
       const instant = action !== 'request';
       if (instant && payload.side !== action) fail('거래 종류를 다시 확인해 주세요.');

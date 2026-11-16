@@ -493,18 +493,20 @@
     if (!news.length) return '<p class="muted">아직 기록이 없어요. 회사 실적, 미션 결과와 승인된 거래가 여기에 남아요.</p>';
     return `<ul class="list market-news">${news.map((entry) => {
       const c = company(entry.companyId);
-      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '연동'} · ${entry.title || c?.name || ''}`;
+      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'reality' ? `현실 소식 · ${entry.category === 'weather' ? '날씨' : entry.category === 'season' ? '계절' : '뉴스'}` : entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '연동'} · ${entry.title || c?.name || ''}`;
       const delta = entry.delta;
       const detail = entry.activityType === 'trade' ? `총 ${fmt(entry.total ?? entry.price ?? 0)}피스` : Number.isFinite(delta) ? `기준가 ${delta >= 0 ? '+' : ''}${fmt(delta)}피스` : '연동 변화';
       const move = Number.isFinite(entry.priceBefore) && Number.isFinite(entry.priceAfter) ? `<div class="meta">다음 매수가 ${fmt(entry.priceBefore)} → ${fmt(entry.priceAfter)}피스</div>` : '';
-      return `<li><div><span class="meta">${h(c?.name || entry.companyName || '회사')} · ${fmtTime(entry.time || entry.createdAt)}</span><div>${h(label)}</div>${move}</div><span class="badge ${entry.activityType === 'event' ? 'gold' : ''}">${h(detail)}</span></li>`;
+      const source = entry.kind === 'reality' ? `<div class="meta">${entry.isForecast ? '예보·전망' : '발표·보도'} · 소식 ${h(entry.eventDate)} · 출처 게시 ${h(entry.publishedAt)} · ${h(entry.sourceName)} · ${h(entry.region)} · ${h(entry.factSummary)}</div><div class="meta">가격 반영 이유: ${h(entry.reasoning)}</div>${String(entry.sourceUrl || '').startsWith('https://') ? `<a class="meta" href="${h(entry.sourceUrl)}" target="_blank" rel="noopener noreferrer">출처 보기 ↗</a>` : ''}` : '';
+      return `<li><div><span class="meta">${h(c?.name || entry.companyName || '회사')} · ${fmtTime(entry.time || entry.createdAt)}</span><div>${h(label)}</div>${move}${source}</div><span class="badge ${entry.activityType === 'event' ? 'gold' : ''}">${h(detail)}</span></li>`;
     }).join('')}</ul>`;
   }
 
   function marketRules() {
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
       <p>한 종목의 주식을 사고팔면 그 종목의 보유량, 이웃 종목과 합친 보유량, 시장 전체 보유량이 함께 바뀌어요. 종목 자체는 5주 구간, 연결된 두 종목은 합계 3주 구간, 시장 전체는 합계 5주 구간을 넘을 때마다 1피스씩 움직여요.</p>
-      <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 연결을 따라 다른 종목의 기준가에도 영향이 퍼져요. 멀리 있는 종목일수록 영향이 작아져요.</p>
+      <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 연결을 따라 다른 종목의 기준가에도 영향이 퍼져요. 현실 소식은 출처와 가격에 영향을 주는 이유를 함께 기록하고, 선택한 회사에 ±1~2피스, ±2일 때 바로 이웃 회사에 ±1피스까지 반영해요. 현실 소식은 하루 최대 2건, 종목별 하루 최대 ±2피스예요.</p>
+      <p>날씨·계절·뉴스를 읽고 엄마가 직접 골라 반영하는 가족용 가상 가격이에요. 사이트가 뉴스를 자동 수집하거나 실제 주식 가격을 가져오는 기능은 아니며, 실제 투자와 무관합니다.</p>
       <p>내 이름을 고르고 수량과 총액을 확인하면 매수와 매도가 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
@@ -557,7 +559,7 @@
   }
 
   function adminMarket() {
-    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적과 미션 결과를 남기고 회사의 기준가를 조정해요.</p></div><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div><p class="meta">이전에 접수된 대기 요청은 ‘승인’ 탭에서 확인할 수 있어요.</p></section>
+    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적·미션이나 출처가 확인된 현실 소식으로 기준가를 조정해요.</p></div><div class="actions"><button class="btn" data-action="market-reality-event" ${state.market.companies.length ? '' : 'disabled'}>📰 현실 소식 반영</button><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div></div><p class="meta">현실 소식은 엄마가 출처와 가격 영향 이유를 확인해 직접 적용해요. 하루 최대 2건, 종목별 변화량은 하루 ±2피스까지예요. 아직 접수된 대기 요청은 ‘승인’ 탭에서 확인할 수 있어요.</p></section>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
       <section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
   }
@@ -621,6 +623,42 @@
     };
     input.addEventListener('input', update);
     update();
+    return false;
+  }
+
+  function openRealityEvent() {
+    const companies = Market.linkedCompanies(state);
+    if (!companies.length) return false;
+    const id = uid();
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const options = companies.map((c) => `<option value="${h(c.id)}">${h(c.name)}</option>`).join('');
+    openModal(`<h3>📰 현실 소식 반영</h3><p class="muted">기사·기상청·계절 정보를 확인한 뒤 가족용 가상 가격에 반영해요. 링크와 내용은 엄마가 직접 확인해 주세요.</p>
+      <label class="field">소식 종류<select name="category"><option value="weather">날씨</option><option value="season">계절</option><option value="news">뉴스</option></select></label>
+      <label class="field">한 줄 제목<input name="title" required maxlength="100" placeholder="예: 갑작스러운 한파 예보"></label>
+      <div class="form-grid"><label class="field">소식이 해당하는 날짜<input name="eventDate" type="date" value="${today}" required></label><label class="field">출처 발표 날짜<input name="publishedAt" type="date" value="${today}" required></label></div>
+      <label class="field">지역 또는 범위<input name="region" required maxlength="80" placeholder="예: 우리 동네 / 전국"></label>
+      <label class="field">출처 이름<input name="sourceName" required maxlength="80" placeholder="예: 기상청"></label>
+      <label class="field">원문 링크<input name="sourceUrl" type="url" inputmode="url" required placeholder="https://..."></label>
+      <label class="field">확인한 사실 요약<textarea name="factSummary" required maxlength="500" rows="3" placeholder="원문에서 확인되는 사실만 적어 주세요."></textarea></label>
+      <label class="field">영향을 받을 회사<select name="companyId">${options}</select></label>
+      <label class="field">가격에 반영할 이유<textarea name="reasoning" required maxlength="300" rows="2" placeholder="이 소식이 이 회사에 어떤 영향을 준다고 생각하는지 적어 주세요."></textarea></label>
+      <label class="field">기준가 변화 (피스)<select name="delta"><option value="1">+1피스 · 조금 유리</option><option value="-1">−1피스 · 조금 불리</option><option value="2">+2피스 · 큰 영향 (이웃 종목 +1)</option><option value="-2">−2피스 · 큰 영향 (이웃 종목 −1)</option></select></label>
+      <label class="check"><input type="checkbox" name="isForecast"> 예보 또는 전망 소식이에요</label>
+      <div class="preview" id="reality-preview" aria-live="polite">선택한 회사에 반영돼요. ±2피스를 고르면 바로 이웃 회사에도 ±1피스가 반영됩니다.</div>
+      <p class="meta">하루 최대 2건, 회사별 하루 ±2피스까지 적용할 수 있어요. 적용하면 주가 그래프와 가족 기록에 남고, 해당 종목의 대기 거래는 만료됩니다. 사실 확인과 가격 판단은 별도로 기록됩니다.</p>
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">확인하고 반영</button></div>`, (fd) => marketAction('reality-event', { id, category: fd.get('category'), title: String(fd.get('title')).trim(), eventDate: fd.get('eventDate'), publishedAt: fd.get('publishedAt'), region: String(fd.get('region')).trim(), sourceName: String(fd.get('sourceName')).trim(), sourceUrl: String(fd.get('sourceUrl')).trim(), factSummary: String(fd.get('factSummary')).trim(), companyId: fd.get('companyId'), reasoning: String(fd.get('reasoning')).trim(), delta: Number(fd.get('delta')), isForecast: fd.has('isForecast') }, '현실 소식을 기록하고 주가에 반영했어요'));
+    const form = $('form', modal);
+    const updatePreview = () => {
+      const selected = company(form.elements.companyId.value);
+      const delta = Number(form.elements.delta.value);
+      const targets = selected ? [{ c: selected, delta }, ...(Math.abs(delta) === 2 ? Market.neighbors(state, selected.id).map((c) => ({ c, delta: Math.sign(delta) })) : [])] : [];
+      $('#reality-preview').textContent = targets.length
+        ? `적용 미리보기 · ${targets.map(({ c, delta: change }) => `${c.name} 기준가 ${fmt(c.basePrice)} → ${fmt(c.basePrice + change)}피스`).join(' · ')}`
+        : '회사를 선택해 주세요.';
+    };
+    form.addEventListener('input', updatePreview);
+    form.addEventListener('change', updatePreview);
+    updatePreview();
     return false;
   }
 
@@ -924,6 +962,7 @@
     'market-sell': (id) => openTrade(id, 'sell'),
     'market-create': () => openCompanyCreate(),
     'market-event': (id) => openMarketEvent(id),
+    'market-reality-event': () => openRealityEvent(),
     'market-admin': () => { ui.adminTab = 'market'; location.hash = 'admin'; },
     'pick-member': (id) => safeSet(localStorage, MEMBER_KEY, id),
     'shop-cat': (id) => { ui.shopCat = id; },
