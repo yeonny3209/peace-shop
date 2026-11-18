@@ -333,6 +333,8 @@
     const available = me.balance - pending;
     const myRequests = state.requests.filter((r) => r.memberId === mid && r.status === 'pending');
     const myHistory = state.history.filter((x) => x.memberId === mid).slice(-8).reverse();
+    const myStocks = state.market.companies.map((c) => ({ c, quantity: Market.holding(state, mid, c.id).quantity }));
+    const myShareCount = myStocks.reduce((sum, item) => sum + item.quantity, 0);
     const products = state.products.filter((p) => ui.shopCat === 'all' || p.category === ui.shopCat);
     const usedCats = CATEGORIES.filter((c) => state.products.some((p) => p.category === c.id));
 
@@ -353,6 +355,12 @@
           <button class="btn" data-action="bonus-request">📚 문제집 완주 신고 (+${BONUS})</button>
           ${state.settings.transfer !== false && state.members.length > 1 ? '<button class="btn" data-action="transfer">💌 피스 보내기</button>' : ''}
         </div>
+      </section>
+
+      <section class="card personal-stock-summary">
+        <div class="spread"><div><h2>${h(me.name)}의 주식</h2><p class="meta">이 화면에서 선택한 가족의 보유 현황이에요.</p></div><span class="badge">총 ${fmt(myShareCount)}주</span></div>
+        ${myShareCount ? `<div class="personal-stock-list">${myStocks.filter((item) => item.quantity > 0).map(({ c, quantity }) => `<div><span>${h(c.name)}</span><strong>${fmt(quantity)}주</strong></div>`).join('')}</div>` : '<p class="muted">아직 보유한 주식이 없어요.</p>'}
+        <a class="btn sm" href="#market">내 주식 자세히 보기</a>
       </section>
 
       <section>
@@ -543,7 +551,7 @@
         return `<article class="card company-card"><div class="spread"><span class="company-symbol" aria-hidden="true">${['🌱', '🍪', '🚀', '🏡'][i % 4]}</span><span class="badge">가족 보유 ${fmt(outstanding)}주</span></div><div><h3>${h(c.name)}</h3><p class="muted company-description">${h(c.description || '함께 키워 가는 우리 가족 회사')}</p></div>
           <div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(price)} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} + 수요 ${fmt(price - c.basePrice)}${sellPrice !== null ? ` · 1주 매도가 ${fmt(sellPrice)}` : ''}</span></div>
           ${links ? `<div class="meta muted">연결 종목 ${links}</div>` : ''}
-          <div class="company-owned"><span>내 보유 <strong>${fmt(held.quantity)}주</strong></span><span class="meta">매도 가능 ${fmt(available)}주</span></div>
+          <div class="company-owned"><span>${h(me.name)} 보유 <strong>${fmt(held.quantity)}주</strong></span><span class="meta">매도 가능 ${fmt(available)}주</span></div>
           <div class="market-trade-buttons"><button class="btn primary" data-action="market-buy" data-id="${h(c.id)}" ${me.balance - reserved < price || outstanding >= 10000 ? 'disabled' : ''}>바로 매수</button><button class="btn" data-action="market-sell" data-id="${h(c.id)}" ${available < 1 ? 'disabled' : ''}>바로 매도</button></div>
         </article>`;
       }).join('')}</div>` : '<div class="card empty"><span class="big">🌱</span><h3>첫 회사를 기다리고 있어요</h3><p>엄마 화면의 ‘주식 관리’에서 회사 이름과 시작 기준가를 정해 주세요.</p><a class="btn primary" href="#admin" data-action="market-admin">회사 만들기</a></div>'}</section>

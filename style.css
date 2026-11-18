@@ -249,6 +249,13 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 .company-price strong small { font-size: .85rem; font-weight: 500; }
 .company-price .meta, .company-owned .meta, .market-page > section > .meta, .market-rules p, dialog .meta { color: var(--muted); font-size: .78rem; }
 .company-owned { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .85rem; border-top: 1px solid var(--line); padding-top: 12px; }
+.personal-stock-summary { display: flex; flex-direction: column; gap: 12px; }
+.personal-stock-summary h2 { font-size: 1.1rem; }
+.personal-stock-summary .meta { margin: 4px 0 0; }
+.personal-stock-summary > .btn { align-self: flex-start; }
+.personal-stock-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.personal-stock-list > div { display: flex; gap: 8px; align-items: center; padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); font-size: .85rem; }
+.personal-stock-list strong { font-variant-numeric: tabular-nums; }
 .market-trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .market-positive { color: var(--accent); }
 .market-negative { color: var(--danger); }
