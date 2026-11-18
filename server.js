@@ -96,7 +96,7 @@ async function commit(state) {
 let lock = Promise.resolve();
 const locked = (fn) => { const run = lock.then(fn, fn); lock = run.catch(() => {}); return run; };
 
-const FEED_INTERVAL = 6 * 60 * 60 * 1000;
+const FEED_INTERVAL = 60 * 60 * 1000;
 let feedScanRunning = false;
 const koreaDate = (time) => new Date(time + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const normalizedName = (name) => String(name || '').replace(/\s/g, '');
@@ -104,6 +104,19 @@ async function pollRealityFeeds() {
   if (process.env.PEACE_SHOP_DISABLE_REALITY_FEEDS === '1' || feedScanRunning || !db.state?.market?.companies?.length) return;
   feedScanRunning = true;
   try {
+    const today = koreaDate(Date.now());
+    await locked(async () => {
+      if (!db.state?.market?.companies?.length || db.state.market.events.some((event) => event.kind === 'special' && event.ruleDate === today)) return;
+      const yesterday = koreaDate(Date.now() - 24 * 60 * 60 * 1000);
+      const yesterdayRule = db.state.market.events.find((event) => event.kind === 'special' && event.ruleDate === yesterday)?.ruleIndex;
+      const choices = Market.SPECIAL_RULES.map((_, index) => index).filter((index) => index !== yesterdayRule);
+      const ruleIndex = choices[crypto.randomInt(choices.length)];
+      const id = `special-${today}`;
+      const next = Market.apply(db.state, 'special-rule', { id, ruleDate: today, ruleIndex }, { isAdmin: true, id });
+      Market.validate(next);
+      await commit(next);
+      console.log(`오늘의 무작위 특수 규칙: ${Market.SPECIAL_RULES[ruleIndex].name}`);
+    });
     const now = Date.now();
     const groups = await Promise.all(RealityFeed.feeds.map(async (feed) => {
       const query = encodeURIComponent(`${feed.query} when:1d`);
@@ -151,7 +164,7 @@ async function pollRealityFeeds() {
         }
       });
       const todayCount = new Set(db.state?.market?.events.filter((event) => event.kind === 'reality' && event.day === koreaDate(Date.now())).map((event) => event.realityEventId || event.id) || []).size;
-      if (todayCount >= 2) break;
+      if (todayCount >= 6) break;
     }
   } finally {
     feedScanRunning = false;

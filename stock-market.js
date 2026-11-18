@@ -7,7 +7,7 @@
   const MAX_ORDER = 100;
   const MAX_SHARES = 10000;
   const MAX_BASE = 10000;
-  const MAX_REALITY_EVENTS_PER_DAY = 2;
+  const MAX_REALITY_EVENTS_PER_DAY = 6;
   const statuses = ['pending', 'approved', 'rejected', 'cancelled', 'expired'];
   const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
   const integer = (n, min, max) => Number.isSafeInteger(n) && n >= min && n <= max;
@@ -34,6 +34,18 @@
     반짝문구: { id: 'linked-notebooks', name: '쓱쓱노트', description: '공부와 그림에 쓰는 노트를 만들어요.', basePrice: 2 },
     피스게임즈: { id: 'linked-board-games', name: '즐거운보드게임', description: '온 가족이 식탁에 모여 할 보드게임을 만들어요.', basePrice: 4 },
   };
+  const SPECIAL_RULES = [
+    { name: '간식 파티', description: '바삭과자와 달콤초콜릿이 1피스씩 올라요.', impacts: [['바삭과자', 1], ['달콤초콜릿', 1]] },
+    { name: '공부 집중 주간', description: '문구와 노트가 오르고 게임즈는 잠깐 쉬어요.', impacts: [['반짝문구', 1], ['쓱쓱노트', 1], ['피스게임즈', -1]] },
+    { name: '시원한 여름', description: '음료와 주스가 오르고 라면은 조금 내려요.', impacts: [['달콤음료', 1], ['상큼주스', 1], ['한밤라면', -1]] },
+    { name: '뜨끈한 국물 주간', description: '라면과 분식이 오르고 주스는 조금 내려요.', impacts: [['한밤라면', 1], ['든든분식', 1], ['상큼주스', -1]] },
+    { name: '풍성한 수확', description: '싱싱과일은 2피스, 달콤잼은 1피스 올라요.', impacts: [['싱싱과일', 2], ['달콤잼', 1]] },
+    { name: '카카오 품귀', description: '초콜릿은 2피스 내려가고 잼은 1피스 올라요.', impacts: [['달콤초콜릿', -2], ['달콤잼', 1]] },
+    { name: '가족 게임의 밤', description: '게임즈와 보드게임이 오르고 과자도 조금 올라요.', impacts: [['피스게임즈', 1], ['즐거운보드게임', 2], ['바삭과자', 1]] },
+    { name: '갓 구운 빵', description: '우리집 베이커리와 달콤잼이 1피스씩 올라요.', impacts: [['우리집베이커리', 1], ['달콤잼', 1]] },
+    { name: '가족 소풍', description: '싱싱과일, 상큼주스, 보드게임이 1피스씩 올라요.', impacts: [['싱싱과일', 1], ['상큼주스', 1], ['즐거운보드게임', 1]] },
+    { name: '재료값 상승', description: '과자·초콜릿·빵은 원가 부담으로 조금 내려요.', impacts: [['바삭과자', -1], ['달콤초콜릿', -1], ['우리집베이커리', -1]] },
+  ];
   const nameKey = (name) => String(name).replace(/\s/g, '');
   const linkOrder = originalLinks.flatMap((name) => expansion[name] ? [name, nameKey(expansion[name].name)] : [name]);
   function linkedCompanies(state) {
@@ -53,12 +65,12 @@
   function priceCurve(state, companyId) {
     const c = company(state, companyId);
     const companies = market(state).companies;
-    if (companies.length < 2) return (shares) => c.basePrice + Math.floor(shares / 5);
+    if (companies.length < 2) return (shares) => c.basePrice + Math.floor(shares / 3);
     const nearby = neighbors(state, companyId).map((other) => outstanding(state, other.id));
     const marketShares = companies.reduce((sum, other) => sum + (other.id === companyId ? 0 : outstanding(state, other.id)), 0);
     // Each shared band uses the same total on both ends of a trade. Reversing a set of trades cannot mint pieces.
-    return (shares) => c.basePrice + Math.floor(shares / 5) + Math.floor((marketShares + shares) / 5)
-      + nearby.reduce((sum, count) => sum + Math.floor((count + shares) / 3), 0);
+    return (shares) => c.basePrice + Math.floor(shares / 3) + Math.floor((marketShares + shares) / 4)
+      + nearby.reduce((sum, count) => sum + Math.floor((count + shares) / 2), 0);
   }
   const priceAt = (state, companyId, shares) => priceCurve(state, companyId)(shares);
   const nextPrice = (state, companyId) => priceAt(state, companyId, outstanding(state, companyId));
@@ -190,7 +202,7 @@
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) fail('출처 링크는 https 주소로 입력해 주세요.');
     const day = koreaDay(now);
     const todayEvents = [...new Set(mk.events.filter((e) => e.kind === 'reality' && e.day === day).map((e) => e.realityEventId || e.id))];
-    if (todayEvents.length >= MAX_REALITY_EVENTS_PER_DAY) fail('현실 소식은 하루에 최대 2건까지 반영할 수 있어요.', 429);
+    if (todayEvents.length >= MAX_REALITY_EVENTS_PER_DAY) fail('현실 소식은 하루에 최대 6건까지 반영할 수 있어요.', 429);
     const priorByCompany = new Map();
     mk.events.filter((e) => e.kind === 'reality' && e.day === day).forEach((e) => {
       priorByCompany.set(e.companyId, (priorByCompany.get(e.companyId) || 0) + Math.abs(e.delta || 0));
@@ -215,6 +227,33 @@
         isForecast: payload.isForecast, isAutomatic: payload.isAutomatic === true, targetCompanyId: c.id, delta, day,
         baseBefore: target.basePrice - delta, baseAfter: target.basePrice,
         priceBefore: before.get(target.id), priceAfter: after, quoteVersion: target.quoteVersion, time: now });
+    });
+  }
+  function applySpecialRule(state, payload, id, now) {
+    const day = koreaDay(now);
+    if (payload.ruleDate !== day) fail('오늘 날짜의 특수 규칙만 적용할 수 있어요.');
+    if (!integer(payload.ruleIndex, 0, SPECIAL_RULES.length - 1)) fail('특수 규칙 번호가 올바르지 않아요.');
+    if (market(state).events.some((event) => event.kind === 'special' && event.ruleDate === day)) return state;
+    const rule = SPECIAL_RULES[payload.ruleIndex];
+    const companies = linkedCompanies(state);
+    const previousDay = new Date(Date.parse(`${day}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const previousRule = market(state).events.find((event) => event.kind === 'special' && event.ruleDate === previousDay)?.ruleIndex;
+    if (previousRule === payload.ruleIndex) fail('어제와 다른 특수 규칙을 골라 주세요.');
+    const before = marketPrices(state);
+    const targets = rule.impacts.map(([name, delta]) => ({
+      c: companies.find((item) => nameKey(item.name) === nameKey(name)), delta,
+    })).filter((item) => item.c);
+    if (!targets.length) fail('특수 규칙에 해당하는 회사가 없어요.');
+    targets.forEach(({ c, delta }, index) => {
+      const afterBase = Math.max(1, Math.min(MAX_BASE, c.basePrice + delta));
+      const appliedDelta = afterBase - c.basePrice;
+      if (appliedDelta) { c.basePrice = afterBase; c.quoteVersion++; expire(state, c.id, now); }
+      const afterPrice = nextPrice(state, c.id);
+      market(state).events.push({ id: index === 0 ? id : `${id}-r${index}`, ruleId: id,
+        companyId: c.id, companyName: c.name, kind: 'special', ruleDate: day,
+        ruleIndex: payload.ruleIndex, ruleName: rule.name, title: rule.description,
+        delta: appliedDelta, baseBefore: c.basePrice - appliedDelta, baseAfter: c.basePrice,
+        priceBefore: before.get(c.id), priceAfter: afterPrice, quoteVersion: c.quoteVersion, time: now });
     });
   }
   function validate(state) {
@@ -322,6 +361,10 @@
       requireAdmin(options); checkId();
       if (mk.events.some((e) => e.realityEventId === id || e.id === id)) return state;
       applyRealityEvent(state, payload, id, now);
+    } else if (action === 'special-rule') {
+      requireAdmin(options); checkId();
+      if (mk.events.some((event) => event.kind === 'special' && event.ruleDate === koreaDay(now))) return state;
+      applySpecialRule(state, payload, id, now);
     } else if (['request', 'buy', 'sell'].includes(action)) {
       const instant = action !== 'request';
       if (instant && payload.side !== action) fail('거래 종류를 다시 확인해 주세요.');
@@ -408,5 +451,5 @@
     return [{ time: c.createdAt, price: initialPrice }, ...changes.map((entry) => ({ time: entry.time, price: entry.priceAfter }))];
   }
 
-  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, priceAt, priceCurve, nextPrice, linkedCompanies, neighbors, upgradeLinks, expandLinks, MAX_ORDER, MAX_SHARES };
+  return { ensure, outstanding, holding, reservedPieces, availableShares, quote, apply, validate, priceHistory, priceAt, priceCurve, nextPrice, linkedCompanies, neighbors, upgradeLinks, expandLinks, SPECIAL_RULES, MAX_ORDER, MAX_SHARES };
 });

@@ -2,17 +2,17 @@
 'use strict';
 
 const feeds = [
-  { category: 'weather', query: '한국 기상청 한파 한랭 예보 특보' },
-  { category: 'weather', query: '한국 기상청 폭염 무더위 예보 특보' },
-  { category: 'weather', query: '한국 태풍 호우 폭우 농작물 피해' },
-  { category: 'season', query: '제철 과일 감귤 딸기 수확 작황' },
-  { category: 'news', query: '코코아 카카오 가격 공급 작황' },
-  { category: 'news', query: '밀가루 밀 가격 제빵 원가' },
-  { category: 'news', query: '음료 주스 판매 수요 여름' },
-  { category: 'news', query: '라면 분식 판매 수요 식품' },
-  { category: 'news', query: '문구 종이 가격 수요' },
-  { category: 'news', query: '보드게임 게임 판매 수요 신작' },
-  { category: 'news', query: '과자 제과 판매 수요 식품' },
+  { category: 'weather', query: '한국 기상청 한파 한랭 결빙 서리 예보 특보' },
+  { category: 'weather', query: '한국 기상청 폭염 무더위 폭우 장마 폭설 예보 특보' },
+  { category: 'weather', query: '한국 태풍 호우 폭우 농작물 과수 채소 피해 작황' },
+  { category: 'season', query: '제철 과일 감귤 딸기 사과 수확 작황 풍년 흉작 출하량' },
+  { category: 'news', query: '코코아 카카오 초콜릿 가격 공급 작황 부족' },
+  { category: 'news', query: '밀가루 밀 가격 제빵 빵 원가 공급' },
+  { category: 'news', query: '음료 주스 판매 수요 원료 가격 탄산 여름' },
+  { category: 'news', query: '라면 분식 판매 수요 원가 가격 식품 물가' },
+  { category: 'news', query: '문구 종이 펄프 가격 노트 수요' },
+  { category: 'news', query: '보드게임 게임 판매 수요 신작 매출 이용자' },
+  { category: 'news', query: '과자 제과 판매 수요 원가 가격 신제품 식품 물가' },
 ];
 
 function decodeXml(value) {
@@ -48,8 +48,12 @@ function impactFor(article) {
   if (/(코코아|카카오)/.test(text) && /(가격\s*하락|공급\s*회복|풍작|수급\s*개선)/.test(text)) return { company: '달콤초콜릿', delta: 1, reason: '코코아 원료 공급이 나아지면 초콜릿 회사에 유리할 수 있다는 기사 내용' };
   if (/(밀가루|밀\s*가격|제빵\s*원가)/.test(text) && /(가격\s*(?:급)?상승|급등|공급난|수급\s*불안)/.test(text)) return { company: '우리집베이커리', delta: -1, reason: '밀 원료 비용 상승이 빵 생산에 부담이 될 수 있다는 기사 내용' };
   if (/(밀가루|밀\s*가격|제빵\s*원가)/.test(text) && /(가격\s*하락|공급\s*회복|안정세)/.test(text)) return { company: '우리집베이커리', delta: 1, reason: '밀 원료 비용 완화가 빵 생산에 유리할 수 있다는 기사 내용' };
+  if (/(밀가루|밀\s*가격|면류\s*원가)/.test(text) && /(가격\s*(?:급)?상승|급등|공급난)/.test(text)) return { company: '한밤라면', delta: -1, reason: '밀 원료 비용 상승이 라면 생산에 부담이 될 수 있다는 기사 내용' };
+  if (/(설탕|당류|원당)/.test(text) && /(가격\s*(?:급)?상승|급등|공급난)/.test(text)) return { company: /(음료|주스)/.test(text) ? '달콤음료' : '바삭과자', delta: -1, reason: '설탕 원료 비용 상승이 식품 생산에 부담이 될 수 있다는 기사 내용' };
   if (/(종이|펄프|문구\s*원가)/.test(text) && /(가격\s*(?:급)?상승|급등|공급난)/.test(text)) return { company: '반짝문구', delta: -1, reason: '종이 원료 비용 상승이 문구 회사에 부담이 될 수 있다는 기사 내용' };
   if (/(종이|펄프|문구\s*원가)/.test(text) && /(가격\s*하락|공급\s*회복|안정세)/.test(text)) return { company: '반짝문구', delta: 1, reason: '종이 원료 비용 완화가 문구 회사에 유리할 수 있다는 기사 내용' };
+  if (/(음료|주스)/.test(text) && /(판매\s*증가|매출\s*증가|수요\s*증가|인기)/.test(text)) return { company: /(주스)/.test(text) ? '상큼주스' : '달콤음료', delta: 1, reason: '음료 판매 또는 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
+  if (/(라면|분식)/.test(text) && /(판매\s*증가|매출\s*증가|수요\s*증가|인기)/.test(text)) return { company: /(분식|떡볶이)/.test(text) ? '든든분식' : '한밤라면', delta: 1, reason: '식사 제품 판매 또는 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
   if (/(보드게임|게임)/.test(text) && /(판매\s*증가|매출\s*증가|인기|흥행|이용자\s*증가|성장\s*견인|시장\s*성장|신작\s*출시)/.test(text)) return { company: /보드게임/.test(text) ? '즐거운보드게임' : '피스게임즈', delta: 1, reason: '게임 판매·이용 수요 증가가 회사에 유리할 수 있다는 기사 내용' };
   if (/(보드게임|게임)/.test(text) && /(판매\s*감소|매출\s*감소|이용자\s*감소|서비스\s*종료)/.test(text)) return { company: /보드게임/.test(text) ? '즐거운보드게임' : '피스게임즈', delta: -1, reason: '게임 판매·이용 수요 감소가 회사에 불리할 수 있다는 기사 내용' };
   if (/(과자|제과)/.test(text) && /(판매\s*증가|매출\s*증가|수요\s*증가|인기|물량\s*확대|신제품\s*출시|선물세트\s*출시)/.test(text)) return { company: '바삭과자', delta: 1, reason: '과자 판매 또는 수요 증가가 회사에 유리할 수 있다는 기사 내용' };

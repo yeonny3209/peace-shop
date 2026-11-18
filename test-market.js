@@ -74,7 +74,7 @@ test('linked launch adds chocolate once and formation includes every company', (
   assert.equal(Market.nextPrice(next, 'linked-chocolate'), 4);
   assert.equal(Market.nextPrice(next, 'bread'), 3);
   trade('link-buy-2', 'linked-chocolate', 'buy', 2);
-  assert.equal(Market.nextPrice(next, 'bread'), 4);
+  assert.equal(Market.nextPrice(next, 'bread'), 5);
   assert.ok(next.market.events.some((e) => e.kind === 'linked' && e.companyId === 'bread'));
   trade('link-sell-1', 'snacks', 'sell', 3);
   trade('link-sell-2', 'linked-chocolate', 'sell', 2);
@@ -115,8 +115,8 @@ test('company creation, price events, and approval require admin authority', () 
   assert.equal(state.market.companies.length, 1);
 });
 
-test('buy and sell quotes use the correct side of the 4/5 and 9/10 boundaries', () => {
-  for (const [supply, buyPrice, sellPrice] of [[4, 5, 5], [5, 6, 5], [9, 6, 6], [10, 7, 6]]) {
+test('buy and sell quotes use the correct side of the 2/3 and 5/6 boundaries', () => {
+  for (const [supply, buyPrice, sellPrice] of [[2, 5, 5], [3, 6, 5], [5, 6, 6], [6, 7, 6]]) {
     const state = companyState();
     state.market.holdings.push({ memberId: 'm2', companyId: 'company', quantity: supply, costBasis: supply * 5 });
     assert.equal(Market.quote(state, 'company', 'buy', 1).total, buyPrice, `buy with ${supply} outstanding`);
@@ -125,7 +125,7 @@ test('buy and sell quotes use the correct side of the 4/5 and 9/10 boundaries', 
 });
 
 test('multi-share round trips crossing price bands cannot create free pieces', () => {
-  for (const [supply, expectedTotal] of [[0, 76], [4, 86], [5, 89], [9, 99]]) {
+  for (const [supply, expectedTotal] of [[0, 87], [4, 104], [5, 108], [9, 126]]) {
     let state = companyState();
     if (supply) state.market.holdings.push({ memberId: 'm2', companyId: 'company', quantity: supply, costBasis: supply * 5 });
     assert.equal(Market.quote(state, 'company', 'buy', 13).total, expectedTotal);
@@ -331,7 +331,7 @@ describe('local HTTP integration (isolated temporary file storage)', { concurren
       assert.equal(response.body.state.requests.at(-1).status, 'approved');
       assert.equal(response.body.state.market.trades.length, 2);
       assert.equal(Market.holding(response.body.state, 'm1', 'company').quantity, 0);
-      assert.deepEqual(Market.priceHistory(response.body.state, 'company').map((point) => point.price), [5, 6, 5]);
+      assert.deepEqual(Market.priceHistory(response.body.state, 'company').map((point) => point.price), [5, 7, 5]);
     }
   });
 

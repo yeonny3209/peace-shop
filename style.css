@@ -256,6 +256,10 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 .personal-stock-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .personal-stock-list > div { display: flex; gap: 8px; align-items: center; padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); font-size: .85rem; }
 .personal-stock-list strong { font-variant-numeric: tabular-nums; }
+.daily-special { display: flex; flex-direction: column; gap: 12px; border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: var(--accent-soft); }
+.daily-special h2 { margin: 0; font-size: 1.15rem; }
+.daily-special p { margin: 5px 0 0; }
+.daily-special .meta { color: var(--muted); font-size: .78rem; }
 .market-trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .market-positive { color: var(--accent); }
 .market-negative { color: var(--danger); }

@@ -501,7 +501,7 @@
     if (!news.length) return '<p class="muted">아직 기록이 없어요. 회사 실적, 미션 결과와 승인된 거래가 여기에 남아요.</p>';
     return `<ul class="list market-news">${news.map((entry) => {
       const c = company(entry.companyId);
-      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'reality' ? `현실 소식 · ${entry.category === 'weather' ? '날씨' : entry.category === 'season' ? '계절' : '뉴스'}` : entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '연동'} · ${entry.title || c?.name || ''}`;
+      const label = entry.activityType === 'trade' ? `${member(entry.memberId)?.name || '가족'} · ${entry.side === 'buy' ? '매수' : '매도'} ${fmt(entry.quantity)}주` : `${entry.kind === 'special' ? `🎲 오늘의 특수 규칙 · ${entry.ruleName}` : entry.kind === 'reality' ? `현실 소식 · ${entry.category === 'weather' ? '날씨' : entry.category === 'season' ? '계절' : '뉴스'}` : entry.kind === 'mission' ? '가족 미션' : entry.kind === 'performance' ? '회사 실적' : '연동'} · ${entry.title || c?.name || ''}`;
       const delta = entry.delta;
       const detail = entry.activityType === 'trade' ? `총 ${fmt(entry.total ?? entry.price ?? 0)}피스` : Number.isFinite(delta) ? `기준가 ${delta >= 0 ? '+' : ''}${fmt(delta)}피스` : '연동 변화';
       const move = Number.isFinite(entry.priceBefore) && Number.isFinite(entry.priceAfter) ? `<div class="meta">다음 매수가 ${fmt(entry.priceBefore)} → ${fmt(entry.priceAfter)}피스</div>` : '';
@@ -512,9 +512,10 @@
 
   function marketRules() {
     return `<details class="card market-rules"><summary>주가는 어떻게 움직이나요?</summary><div class="stack">
-      <p>한 종목의 주식을 사고팔면 그 종목의 보유량, 이웃 종목과 합친 보유량, 시장 전체 보유량이 함께 바뀌어요. 종목 자체는 5주 구간, 연결된 두 종목은 합계 3주 구간, 시장 전체는 합계 5주 구간을 넘을 때마다 1피스씩 움직여요.</p>
-      <p>엄마가 <strong>회사 실적·가족 미션 결과</strong>를 기록하면 연결을 따라 다른 종목의 기준가에도 영향이 퍼져요. 현실 소식은 출처와 가격에 영향을 주는 이유를 함께 기록하고, 선택한 회사에 ±1~2피스, ±2일 때 바로 이웃 회사에 ±1피스까지 반영해요. 현실 소식은 하루 최대 2건, 종목별 하루 최대 ±2피스예요.</p>
-      <p>서버가 뉴스 검색 RSS에서 회사와 연관된 제목을 6시간마다 확인하고, 정해 둔 단어 규칙에 맞는 소식만 자동 반영해요. 기사는 Google 뉴스 검색 결과를 사용하며, 지역별 기상 예보는 아닙니다. 가격 효과는 실제 기업의 실적 분석이 아닌 가족용 단순 규칙이고 실제 투자와 무관합니다.</p>
+      <p>한 종목의 주식을 사고팔면 그 종목의 보유량, 이웃 종목과 합친 보유량, 시장 전체 보유량이 함께 바뀌어요. 종목 자체 3주, 이웃 종목과 합친 수량 2주, 시장 전체 4주 구간을 넘을 때마다 가격에 1피스씩 더 자주 반영돼요.</p>
+      <p><strong>오늘의 특수 규칙</strong> 하나가 매일 무작위로 선택되어 해당 종목들의 기준가를 움직여요. 이 규칙은 현실 뉴스와 별개인 게임 효과예요. 서버가 뉴스 검색 RSS를 매시간 확인하며, 하루 최대 6건과 종목별 ±2피스 제한 안에서 관련 소식을 자동 반영해요.</p>
+      <ul>${Market.SPECIAL_RULES.map((rule) => `<li><strong>${h(rule.name)}:</strong> ${h(rule.description)}</li>`).join('')}</ul>
+      <p>기사는 Google 뉴스 검색 결과를 사용하며, 지역별 기상 예보는 아닙니다. 가격 효과는 실제 기업의 실적 분석이 아닌 가족용 단순 규칙이고 실제 투자와 무관합니다.</p>
       <p>내 이름을 고르고 수량과 총액을 확인하면 매수와 매도가 즉시 체결돼요. 가격이 바뀌면 새 총액을 확인해 주세요.</p>
       <p>매도대금은 가족 상점에서 지급해 기존 피스 잔액에 더합니다. 주가가 내려가면 산 가격보다 적게 돌려받을 수 있어요. 실제 회사 주식이나 현금 투자는 아닙니다.</p>
     </div></details>`;
@@ -530,6 +531,9 @@
     const cost = holdings.reduce((sum, { held }) => sum + held.costBasis, 0);
     const requests = state.requests.filter((r) => r.type === 'stock' && r.memberId === mid).slice(-10).reverse();
     const realized = state.market.trades.filter((t) => t.memberId === mid && t.side === 'sell').reduce((sum, t) => sum + (t.realizedProfit || 0), 0);
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const todaySpecial = state.market.events.find((event) => event.kind === 'special' && event.ruleDate === today);
+    const todaySpecialStocks = todaySpecial ? state.market.events.filter((event) => event.ruleId === todaySpecial.ruleId) : [];
     return `<div class="stack market-page">
       <div class="spread"><div><p class="market-eyebrow">PEACE FAMILY MARKET</p><h1>우리 가족 주식</h1><p class="muted market-intro">공부로 모은 피스, 우리 가족 회사와 함께.</p></div><a class="btn" href="#shop">상점으로</a></div>
       ${familyChips(mid)}
@@ -538,6 +542,7 @@
         <div class="card"><span class="muted">보유 주식 매도 예상액</span><strong>${fmt(value)} <small>피스</small></strong><span class="meta">매입 원가 ${precise(cost)}피스</span></div>
         <div class="card"><span class="muted">보유 주식 평가 손익</span><strong class="${value - cost >= 0 ? 'market-positive' : 'market-negative'}">${value - cost >= 0 ? '+' : ''}${precise(value - cost)} <small>피스</small></strong><span class="meta">매도해 확정한 손익 ${realized >= 0 ? '+' : ''}${precise(realized)}피스</span></div>
       </section>
+      ${todaySpecial ? `<section class="card daily-special"><div><span class="market-eyebrow">🎲 TODAY'S RANDOM RULE</span><h2>${h(todaySpecial.ruleName)}</h2><p>${h(todaySpecial.title)}</p></div><div class="personal-stock-list">${todaySpecialStocks.filter((event) => event.delta !== 0).map((event) => `<div><span>${h(event.companyName)}</span><strong>${event.delta > 0 ? '+' : ''}${fmt(event.delta)}피스</strong></div>`).join('')}</div><p class="meta">매일 무작위로 하나가 적용되는 가족 게임 규칙이에요.</p></section>` : ''}
       ${marketChart()}
       ${state.market.companies.length > 1 ? `<section class="card"><h2>종목 연결 지도</h2><p class="meta muted">서로 가까운 종목이 수요를 공유하고, 마지막과 첫 종목도 연결돼요.</p><ol class="stock-links">${Market.linkedCompanies(state).map((c) => `<li>${h(c.name)}</li>`).join('')}</ol></section>` : ''}
       <section><div class="section-title"><h2>우리 가족 회사</h2></div>
@@ -567,7 +572,7 @@
   }
 
   function adminMarket() {
-    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적·미션 결과와 자동 수집 현실 소식을 반영해요.</p></div><div class="actions"><button class="btn" data-action="market-reality-event" ${state.market.companies.length ? '' : 'disabled'}>📰 현실 소식 직접 입력</button><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div></div><p class="meta">서버가 뉴스·날씨 관련 검색 RSS를 6시간마다 확인해 정해 둔 단어 규칙에 따라 자동 반영합니다. 하루 최대 2건, 종목별 하루 변화량은 ±2피스까지예요. Render 무료 서버가 잠들면 다음 접속 후 확인을 재개합니다. 대기 거래는 해당 회사 가격이 바뀌면 만료돼요.</p></section>
+    return `<div class="stack"><section class="card"><div class="spread"><div><h2>우리 가족 회사 관리</h2><p class="muted">실적·미션 결과와 자동 수집 현실 소식을 반영해요.</p></div><div class="actions"><button class="btn" data-action="market-reality-event" ${state.market.companies.length ? '' : 'disabled'}>📰 현실 소식 직접 입력</button><button class="btn primary" data-action="market-create">＋ 회사 추가</button></div></div><p class="meta">서버가 뉴스·날씨 관련 검색 RSS를 매시간 확인해 정해 둔 단어 규칙에 따라 자동 반영합니다. 하루 최대 6건, 종목별 하루 변화량은 ±2피스까지예요. 하루 한 번 무작위 특수 규칙도 적용됩니다. Render 무료 서버가 잠들면 다음 접속 후 확인을 재개합니다. 대기 거래는 해당 회사 가격이 바뀌면 만료돼요.</p></section>
       ${state.market.companies.length ? `<div class="market-companies">${state.market.companies.map((c) => `<article class="card company-card"><h3>${h(c.name)}</h3><p class="muted">${h(c.description)}</p><div class="company-price"><span class="muted">다음 1주 매수가</span><strong>${fmt(marketPrice(c))} <small>피스</small></strong><span class="meta">기준가 ${fmt(c.basePrice)} · 가족 보유 ${fmt(Market.outstanding(state, c.id))}주</span></div><button class="btn primary" data-action="market-event" data-id="${h(c.id)}">실적·미션 결과 반영</button></article>`).join('')}</div>` : '<div class="card empty">등록된 회사가 없어요. 가족이 함께 정한 회사 이름으로 시작해 보세요.</div>'}
       <section class="card"><h3>회사와 거래 기록</h3>${marketActivity()}</section>${marketRules()}</div>`;
   }
@@ -653,7 +658,7 @@
       <label class="field">기준가 변화 (피스)<select name="delta"><option value="1">+1피스 · 조금 유리</option><option value="-1">−1피스 · 조금 불리</option><option value="2">+2피스 · 큰 영향 (이웃 종목 +1)</option><option value="-2">−2피스 · 큰 영향 (이웃 종목 −1)</option></select></label>
       <label class="check"><input type="checkbox" name="isForecast"> 예보 또는 전망 소식이에요</label>
       <div class="preview" id="reality-preview" aria-live="polite">선택한 회사에 반영돼요. ±2피스를 고르면 바로 이웃 회사에도 ±1피스가 반영됩니다.</div>
-      <p class="meta">하루 최대 2건, 회사별 하루 ±2피스까지 적용할 수 있어요. 적용하면 주가 그래프와 가족 기록에 남고, 해당 종목의 대기 거래는 만료됩니다. 사실 확인과 가격 판단은 별도로 기록됩니다.</p>
+      <p class="meta">하루 최대 6건, 회사별 하루 ±2피스까지 적용할 수 있어요. 적용하면 주가 그래프와 가족 기록에 남고, 해당 종목의 대기 거래는 만료됩니다. 사실 확인과 가격 판단은 별도로 기록됩니다.</p>
       <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary">확인하고 반영</button></div>`, (fd) => marketAction('reality-event', { id, category: fd.get('category'), title: String(fd.get('title')).trim(), eventDate: fd.get('eventDate'), publishedAt: fd.get('publishedAt'), region: String(fd.get('region')).trim(), sourceName: String(fd.get('sourceName')).trim(), sourceUrl: String(fd.get('sourceUrl')).trim(), factSummary: String(fd.get('factSummary')).trim(), companyId: fd.get('companyId'), reasoning: String(fd.get('reasoning')).trim(), delta: Number(fd.get('delta')), isForecast: fd.has('isForecast') }, '현실 소식을 기록하고 주가에 반영했어요'));
     const form = $('form', modal);
     const updatePreview = () => {
